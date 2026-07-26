@@ -49,7 +49,7 @@ worker = [
 worker-llm = ["httpx>=0.27,<1"]
 dev = [
   "whisper-ui[frontend,worker-llm]",
-  "pytest>=9.1.0,<10",
+  "pytest>=9.1.1,<10",
   "pytest-cov>=7.0,<8",
   # In-process Redis stand-in for the end-to-end integration test. Avoids
   # spinning up a real Redis or a Docker testcontainer in CI. The ``lua``
