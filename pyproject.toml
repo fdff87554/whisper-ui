@@ -49,7 +49,7 @@ worker = [
 worker-llm = ["httpx>=0.27,<1"]
 dev = [
   "whisper-ui[frontend,worker-llm]",
-  "pytest>=9.1.0,<10",
+  "pytest>=9.1.1,<10",
   "pytest-cov>=7.0,<8",
   # In-process Redis stand-in for the end-to-end integration test. Avoids
   # spinning up a real Redis or a Docker testcontainer in CI. The ``lua``
@@ -67,7 +67,7 @@ dev = [
   # Renders the compiled stylesheet in a headless Chromium and reads computed
   # colors to guard theme contrast (issue #61). Browser binary is installed
   # separately via `playwright install chromium` (not a Python dependency).
-  "pytest-playwright>=0.5,<1",
+  "pytest-playwright>=0.9.0,<1",
 ]
 
 [build-system]
