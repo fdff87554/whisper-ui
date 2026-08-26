@@ -1,3 +1,5 @@
+
+
 # Whisper-UI
 
 Speech-to-text system using [faster-whisper](https://github.com/SYSTRAN/faster-whisper)
@@ -588,7 +590,7 @@ alone is queryable in the meantime.
 mise install
 
 # Install Python dependencies from uv.lock for a reproducible env
-uv sync --extra dev
+uv sync --extra dev --frozen
 
 # Run tests
 uv run pytest
