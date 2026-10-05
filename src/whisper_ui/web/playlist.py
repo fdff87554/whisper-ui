@@ -9,7 +9,7 @@ from typing import Any
 from whisper_ui.core.constants import YT_DLP_SOCKET_TIMEOUT, YT_DLP_TRANSIENT_MARKERS
 from whisper_ui.core.messages import DOWNLOAD_SOURCE_TRANSIENT
 from whisper_ui.core.url_validation import YouTubeURLError, validate_youtube_url
-from whisper_ui.core.ytdlp_logging import YtDlpLogger
+from whisper_ui.core.ytdlp_logging import YtDlpLogger, neutralise
 
 logger = logging.getLogger(__name__)
 
@@ -101,19 +101,23 @@ def expand_playlist(playlist_url: str, *, limit: int) -> PlaylistInfo:
             info = ydl.extract_info(playlist_url, download=False)
     except Exception as e:
         msg = str(e).lower()
+        # yt-dlp quotes the playlist or video title in its errors, so every
+        # branch below handles remote-controlled text. It reaches the log and,
+        # for the two that interpolate it, the message the submitter sees.
+        detail = neutralise(str(e))
         if any(m in msg for m in YT_DLP_TRANSIENT_MARKERS):
             # Order matters: this has to win over _UNAVAILABLE_MARKERS below.
             # No traceback -- a throttled or briefly-down source is routine.
-            logger.warning("Playlist source responded transiently: %s (url=%s)", e, playlist_url)
+            logger.warning("Playlist source responded transiently: %s (url=%s)", detail, playlist_url)
             raise PlaylistFetchError(DOWNLOAD_SOURCE_TRANSIENT) from e
         if any(m in msg for m in _UNAVAILABLE_MARKERS):
             # One line, no traceback: an inaccessible playlist is routine user
             # data, but the original message is kept visible so a blocked
             # egress that happens to match a marker can still be diagnosed.
-            logger.warning("Playlist not accessible: %s (url=%s)", e, playlist_url)
-            raise PlaylistUnavailableError(f"Playlist is not accessible: {e}") from e
+            logger.warning("Playlist not accessible: %s (url=%s)", detail, playlist_url)
+            raise PlaylistUnavailableError(f"Playlist is not accessible: {detail}") from e
         logger.exception("Failed to fetch playlist metadata for %s", playlist_url)
-        raise PlaylistFetchError(f"Failed to fetch playlist metadata: {e}") from e
+        raise PlaylistFetchError(f"Failed to fetch playlist metadata: {detail}") from e
 
     if info is None:
         raise PlaylistEmptyError("Playlist metadata extraction returned nothing.")
