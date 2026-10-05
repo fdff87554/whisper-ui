@@ -176,6 +176,9 @@ class Settings(BaseSettings):
     # far denser than the resolution ceiling suggests. Sized to clear any
     # legitimate source at the duration cap: four hours of 1080p H.264 from
     # YouTube runs around 3-4.5 Mbit/s, i.e. well under 8 GiB. 0 disables it.
+    # Enforced from yt-dlp's progress events plus a final check on the file
+    # on disk, so it stops the transfer part-way for every protocol except
+    # m3u8, where ffmpeg reports only on completion. See _guard_download_size.
     youtube_max_download_size: int = 8 * 1024 * 1024 * 1024  # 8 GiB
 
     # Twitter / X
