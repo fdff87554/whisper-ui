@@ -161,6 +161,34 @@ class TestUpstreamTextCannotForgeALine:
         assert len(message.splitlines()) == 1
         assert not any(ch in message for ch in "\r\x1b")
 
+    @pytest.mark.parametrize(
+        "payload",
+        ["boom\u2028INFO: ok", "boom\rINFO: ok", "boom\x1b[2KINFO: ok"],
+        ids=["line-separator", "carriage-return", "ansi-erase"],
+    )
+    def test_an_unexpected_failure_keeps_frames_without_leaking_the_text(self, caplog, payload: str):
+        # The generic branch logs a traceback, and the last line a traceback
+        # renders is the exception's own text -- the one place the remote
+        # string survives the sanitised `detail`.
+        module = _make_mock_module(error=RuntimeError(payload))
+        with (
+            patch.dict("sys.modules", {"yt_dlp": module}),
+            caplog.at_level(logging.ERROR, logger="whisper_ui.web.playlist"),
+            pytest.raises(PlaylistFetchError),
+        ):
+            expand_playlist(PLAYLIST_URL, limit=50)
+
+        record = caplog.records[0]
+        rendered = (
+            record.getMessage()
+            + "\n"
+            + (logging.Formatter().formatException(record.exc_info) if record.exc_info else "")
+        )
+        assert record.exc_info, "stack frames are worth keeping for an unexpected failure"
+        assert '  File "' in rendered
+        assert not any(ch in rendered for ch in "\r\x1b")
+        assert "\u2028" not in rendered
+
     def test_the_log_record_is_single_line(self, caplog):
         module = _make_mock_module(error=Exception("This playlist is private: a\u2028b"))
         with (

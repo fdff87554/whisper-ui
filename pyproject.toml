@@ -31,6 +31,8 @@ frontend = [
 # neither CI nor a dev checkout ever had it, and nothing in the suite noticed:
 # the download tests mock yt-dlp out entirely.
 ytdlp = [
+  # Floor comes from the CVE-2026-55404 patch; this extra only collapses the
+  # two previous declarations into one, it does not move the version.
   "yt-dlp>=2026.8.19",
   # The JavaScript challenge solvers. yt-dlp pins the exact version it needs
   # in its own [default]/[pin] extras; we depend on the package directly
