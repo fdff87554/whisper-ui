@@ -8,6 +8,7 @@ import pytest
 
 from whisper_ui.core.constants import YT_DLP_MAX_HEIGHT
 from whisper_ui.core.exceptions import DownloadError
+from whisper_ui.core.ytdlp_logging import YtDlpLogger
 from whisper_ui.pipeline.download import _MAX_DOWNLOAD_ATTEMPTS, DownloadStage
 
 
@@ -420,6 +421,19 @@ class TestDownloadStageWithMock:
             DownloadStage().execute(context)
 
         assert not partial.exists()
+
+    def test_yt_dlp_output_is_routed_through_a_logger(self, context, download_dir):
+        # Without this yt-dlp writes extraction failures straight to the
+        # worker's stderr, outside the logging framework and carrying
+        # remote-controlled text.
+        mock_ydl = self._make_mock_ydl(download_dir)
+        mock_module = MagicMock()
+        mock_module.YoutubeDL.return_value = mock_ydl
+
+        with patch.dict("sys.modules", {"yt_dlp": mock_module}):
+            DownloadStage().execute(context)
+
+        assert isinstance(mock_module.YoutubeDL.call_args.args[0]["logger"], YtDlpLogger)
 
     def test_cleanup_is_noop(self):
         stage = DownloadStage()

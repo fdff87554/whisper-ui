@@ -28,6 +28,7 @@ from whisper_ui.core.url_validation import (
     is_twitter_url,
     is_valid_gdrive_file_id,
 )
+from whisper_ui.core.ytdlp_logging import YtDlpLogger
 
 if TYPE_CHECKING:
     from whisper_ui.pipeline.base import ProgressCallback
@@ -275,6 +276,9 @@ class DownloadStage:
             "progress_hooks": [progress_hook],
             "quiet": True,
             "no_warnings": True,
+            # quiet/no_warnings do not cover YoutubeDL.trouble(), which
+            # writes straight to stderr; see whisper_ui.core.ytdlp_logging.
+            "logger": YtDlpLogger(logger),
         }
         # Operator-supplied login cookies (X login-walled / age-restricted posts).
         # Only set when the file actually exists, so an unset/missing path stays
