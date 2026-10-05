@@ -83,15 +83,26 @@ YT_DLP_FORMAT_SORT = (
     "acodec:aac",
 )
 
-# The height ceiling repeats on every bounded fallback so a video with no
-# capped adaptive rendition cannot silently arrive at full resolution. The
-# final unbounded "best" is the last resort: it keeps sources that report no
-# height at all (some X posts) downloadable rather than failing selection.
+# The height ceiling repeats on every fallback so a video with no capped
+# adaptive rendition cannot silently arrive at full resolution.
+#
+# The last resort writes the ceiling as "height<=?N" rather than "height<=N".
+# The question mark goes *after the operator* (yt-dlp's documented syntax) and
+# makes the filter optional: formats that report no height at all are kept
+# instead of excluded. That is what the last resort is for -- some X posts
+# carry no height -- but a plain unbounded "best" there also accepted formats
+# whose height is known and over the ceiling, which is the one thing this
+# constant exists to prevent.
+#
+# The trade-off is deliberate: a source available *only* above the ceiling now
+# fails selection instead of downloading at full size. Failing loudly beats
+# quietly doing the thing the cap forbids, and YouTube serves lower renditions
+# for every video, so this is a theoretical case there.
 YT_DLP_VIDEO_FORMAT = (
     f"bestvideo[ext=mp4][height<={YT_DLP_MAX_HEIGHT}]+bestaudio[ext=m4a]"
     f"/best[ext=mp4][height<={YT_DLP_MAX_HEIGHT}]"
     f"/best[height<={YT_DLP_MAX_HEIGHT}]"
-    "/best"
+    f"/best[height<=?{YT_DLP_MAX_HEIGHT}]"
 )
 
 # Redis expiry (seconds)
