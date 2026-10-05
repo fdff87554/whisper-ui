@@ -58,6 +58,42 @@ QUALITY_GATE_REPEAT_RATIO = 0.5
 # yt-dlp
 YT_DLP_SOCKET_TIMEOUT = 30
 
+# Ceiling on the downloaded video track's height. The pipeline only needs the
+# audio; the video track is kept so the viewer can play back the original
+# media. Without a ceiling yt-dlp takes the largest mp4 rendition on offer --
+# measured at 2160p / 229 MiB for a 3.5 minute clip whose audio track is
+# 3.3 MiB. 1080p is past what the viewer's inline player needs and cuts that
+# same clip to 77 MiB.
+YT_DLP_MAX_HEIGHT = 1080
+
+# yt-dlp's default sort ranks AV1 first and YouTube serves AV1 inside mp4, so
+# the [ext=mp4] filters below constrain the container but not the codec. The
+# viewer plays the downloaded file in a browser <video> element, where AV1
+# hardware decode coverage is far thinner than H.264's. This is a *preference*
+# (-S), not a filter: a video offered only in AV1 still downloads at its own
+# resolution rather than falling back to a worse progressive rendition. The
+# string is the sort from yt-dlp's own "-t mp4" preset.
+YT_DLP_FORMAT_SORT = (
+    "vcodec:h264",
+    "lang",
+    "quality",
+    "res",
+    "fps",
+    "hdr:12",
+    "acodec:aac",
+)
+
+# The height ceiling repeats on every bounded fallback so a video with no
+# capped adaptive rendition cannot silently arrive at full resolution. The
+# final unbounded "best" is the last resort: it keeps sources that report no
+# height at all (some X posts) downloadable rather than failing selection.
+YT_DLP_VIDEO_FORMAT = (
+    f"bestvideo[ext=mp4][height<={YT_DLP_MAX_HEIGHT}]+bestaudio[ext=m4a]"
+    f"/best[ext=mp4][height<={YT_DLP_MAX_HEIGHT}]"
+    f"/best[height<={YT_DLP_MAX_HEIGHT}]"
+    "/best"
+)
+
 # Redis expiry (seconds)
 # REDIS_PROCESSING_EXPIRY now lives in Settings.redis_processing_expiry.
 REDIS_COMPLETED_EXPIRY = 86400  # 24 hours
