@@ -23,6 +23,25 @@ class TestNeutralise:
         assert not any(ch in cleaned for ch in "\n\r\x1b\x08")
         assert "‮" not in cleaned
 
+    @pytest.mark.parametrize(
+        "separator",
+        ["\u2028", "\u2029"],
+        ids=["line-separator", "paragraph-separator"],
+    )
+    def test_unicode_line_separators_cannot_split_a_record(self, separator: str) -> None:
+        # U+2028 is Zl and U+2029 is Zp, so neither is caught by the "C"
+        # category check -- but str.splitlines() breaks on both, which is
+        # the forged line this function exists to prevent.
+        cleaned = neutralise(f"title{separator}duration: 9999")
+
+        assert separator not in cleaned
+        assert len(cleaned.splitlines()) == 1
+
+    def test_non_breaking_space_survives(self) -> None:
+        # U+00A0 is Zs. Excluding the whole "Z" class to catch U+2028/U+2029
+        # would take it too, and it is ordinary text inside a title.
+        assert neutralise("Lecture\u00a03") == "Lecture\u00a03"
+
     def test_printable_text_survives_unchanged(self) -> None:
         assert neutralise("Lecture 3 — 第三講 (2026)") == "Lecture 3 — 第三講 (2026)"
 
