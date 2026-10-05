@@ -266,10 +266,11 @@ class TestDownloadStageWithMock:
         ydl_opts = mock_module.YoutubeDL.call_args.args[0]
         assert ydl_opts["allowed_extractors"] == ["youtube"]
 
-    def test_video_format_caps_every_bounded_fallback(self, context, download_dir):
+    def test_every_selector_carries_the_height_ceiling(self, context, download_dir):
         # A ceiling on only the first selector lets a video with no capped
         # adaptive rendition fall through to full resolution, which is the
-        # behaviour this cap exists to stop.
+        # behaviour this cap exists to stop. The last resort relaxes the
+        # filter for *unknown* heights only, not for known ones.
         mock_ydl = self._make_mock_ydl(download_dir)
         mock_module = MagicMock()
         mock_module.YoutubeDL.return_value = mock_ydl
@@ -278,8 +279,8 @@ class TestDownloadStageWithMock:
             DownloadStage().execute(context)
 
         selectors = mock_module.YoutubeDL.call_args.args[0]["format"].split("/")
-        assert selectors[-1] == "best", "the last resort must stay unbounded"
         assert all(f"height<={YT_DLP_MAX_HEIGHT}" in s for s in selectors[:-1])
+        assert selectors[-1] == f"best[height<=?{YT_DLP_MAX_HEIGHT}]"
 
     def test_format_sort_prefers_h264_over_the_yt_dlp_default(self, context, download_dir):
         # yt-dlp's default sort ranks AV1 first and YouTube serves AV1 inside
