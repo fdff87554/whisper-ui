@@ -267,10 +267,11 @@ class TestDownloadStageWithMock:
         ydl_opts = mock_module.YoutubeDL.call_args.args[0]
         assert ydl_opts["allowed_extractors"] == ["youtube"]
 
-    def test_video_format_caps_every_bounded_fallback(self, context, download_dir):
+    def test_every_selector_carries_the_height_ceiling(self, context, download_dir):
         # A ceiling on only the first selector lets a video with no capped
         # adaptive rendition fall through to full resolution, which is the
-        # behaviour this cap exists to stop.
+        # behaviour this cap exists to stop. The last resort relaxes the
+        # filter for *unknown* heights only, not for known ones.
         mock_ydl = self._make_mock_ydl(download_dir)
         mock_module = MagicMock()
         mock_module.YoutubeDL.return_value = mock_ydl
@@ -279,8 +280,8 @@ class TestDownloadStageWithMock:
             DownloadStage().execute(context)
 
         selectors = mock_module.YoutubeDL.call_args.args[0]["format"].split("/")
-        assert selectors[-1] == "best", "the last resort must stay unbounded"
         assert all(f"height<={YT_DLP_MAX_HEIGHT}" in s for s in selectors[:-1])
+        assert selectors[-1] == f"best[height<=?{YT_DLP_MAX_HEIGHT}]"
 
     def test_format_sort_prefers_h264_over_the_yt_dlp_default(self, context, download_dir):
         # yt-dlp's default sort ranks AV1 first and YouTube serves AV1 inside
@@ -396,10 +397,87 @@ class TestDownloadStageWithMock:
             stage.execute(context)
         hook = mock_module.YoutubeDL.call_args.args[0]["progress_hooks"][0]
 
-        hook({"status": "downloading", "downloaded_bytes": 600})
-        hook({"status": "finished", "total_bytes": 600})
+        hook({"status": "downloading", "downloaded_bytes": 600, "filename": "video.f137.mp4"})
+        hook({"status": "finished", "total_bytes": 600, "filename": "video.f137.mp4"})
         with pytest.raises(DownloadError, match="larger than the maximum allowed"):
-            hook({"status": "downloading", "downloaded_bytes": 600})
+            hook({"status": "downloading", "downloaded_bytes": 600, "filename": "video.f140.m4a"})
+
+    def test_a_retried_half_is_not_counted_twice(self, context, download_dir):
+        # A retry re-reports the half that already succeeded: yt-dlp reuses
+        # the complete file and still fires `finished` for it. A running
+        # total would add those bytes again and reject an attempt that is
+        # within the cap.
+        mock_ydl = self._make_mock_ydl(download_dir)
+        mock_module = MagicMock()
+        mock_module.YoutubeDL.return_value = mock_ydl
+
+        stage = DownloadStage(max_download_size=1_000)
+        with patch.dict("sys.modules", {"yt_dlp": mock_module}):
+            stage.execute(context)
+        hook = mock_module.YoutubeDL.call_args.args[0]["progress_hooks"][0]
+
+        video = {"status": "finished", "total_bytes": 600, "filename": "video.f137.mp4"}
+        hook(video)
+        hook(video)  # second attempt re-reports the same file
+        hook({"status": "finished", "total_bytes": 100, "filename": "video.f140.m4a"})
+
+    def test_an_external_downloader_cannot_skip_the_cap(self, context, download_dir):
+        # yt-dlp's ExternalFD emits a single `finished` event and no
+        # `downloading` events at all, so a cap checked only while
+        # downloading is never consulted for it.
+        mock_ydl = self._make_mock_ydl(download_dir)
+        mock_module = MagicMock()
+        mock_module.YoutubeDL.return_value = mock_ydl
+
+        stage = DownloadStage(max_download_size=1_000)
+        with patch.dict("sys.modules", {"yt_dlp": mock_module}):
+            stage.execute(context)
+        hook = mock_module.YoutubeDL.call_args.args[0]["progress_hooks"][0]
+
+        with pytest.raises(DownloadError, match="larger than the maximum allowed"):
+            hook({"status": "finished", "total_bytes": 2_000, "filename": "video.mp4"})
+
+    def test_the_landed_file_is_measured_and_removed_when_oversized(self, context, download_dir):
+        # The progress events describe what a downloader says it fetched, and
+        # a merge writes a file neither event covers. The bytes on disk are
+        # the ones that matter.
+        mock_module = MagicMock()
+        mock_ydl = MagicMock()
+
+        def extract_info(url, download=True):
+            info = {"duration": 120, "title": "Test Video"}
+            if download:
+                (download_dir / "video.mp4").write_bytes(b"x" * 2_000)
+            return info
+
+        mock_ydl.extract_info = extract_info
+        mock_ydl.__enter__ = lambda self: self
+        mock_ydl.__exit__ = MagicMock(return_value=False)
+        mock_module.YoutubeDL.return_value = mock_ydl
+
+        with (
+            patch.dict("sys.modules", {"yt_dlp": mock_module}),
+            pytest.raises(DownloadError, match="larger than the maximum allowed"),
+        ):
+            DownloadStage(max_download_size=1_000).execute(context)
+
+        assert not (download_dir / "video.mp4").exists()
+
+    def test_the_cap_is_reported_in_a_readable_unit(self, context, download_dir):
+        # A fixed "MB" rendered a sub-megabyte cap as "0 MB", which reads as
+        # "nothing is allowed".
+        mock_ydl = self._make_mock_ydl(download_dir, extra_info={"filesize": 5_000})
+        mock_module = MagicMock()
+        mock_module.YoutubeDL.return_value = mock_ydl
+
+        with (
+            patch.dict("sys.modules", {"yt_dlp": mock_module}),
+            pytest.raises(DownloadError) as exc,
+        ):
+            DownloadStage(max_download_size=1_000).execute(context)
+
+        assert "0 MB" not in str(exc.value)
+        assert "1000 bytes" in str(exc.value)
 
     def test_failed_download_removes_partial_files(self, context, download_dir):
         partial = download_dir / "video.f137.mp4.part"
