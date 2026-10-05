@@ -29,7 +29,7 @@ from whisper_ui.core.url_validation import (
     is_twitter_url,
     is_valid_gdrive_file_id,
 )
-from whisper_ui.core.ytdlp_logging import YtDlpLogger
+from whisper_ui.core.ytdlp_logging import YtDlpLogger, neutralise
 
 if TYPE_CHECKING:
     from whisper_ui.pipeline.base import ProgressCallback
@@ -64,6 +64,19 @@ _TWITTER_RESTRICTED_MARKERS = (
 # limit has a moment to clear without risking the stage's job timeout.
 _MAX_DOWNLOAD_ATTEMPTS = 3
 _RETRY_BACKOFF_SECONDS = 2
+
+
+def _as_size(size_bytes: int) -> str:
+    """Render a byte count for a user-facing message.
+
+    Picks the unit from the magnitude. A fixed "MB" rendered the default
+    8 GiB cap as "8192 MB" and anything under half a megabyte as "0 MB",
+    which told a reader with a small cap that nothing was allowed at all.
+    """
+    for unit, scale in (("GB", 1024**3), ("MB", 1024**2), ("KB", 1024)):
+        if size_bytes >= scale:
+            return f"{size_bytes / scale:.1f} {unit}"
+    return f"{size_bytes} bytes"
 
 
 class DownloadStage:
@@ -166,7 +179,7 @@ class DownloadStage:
         except BaseTimeoutException:
             raise
         except Exception as e:
-            raise DownloadError(f"Failed to download from Google Drive: {e}") from e
+            raise DownloadError(f"Failed to download from Google Drive: {neutralise(str(e))}") from e
 
         downloaded = Path(result)
         if not downloaded.is_file() or downloaded.stat().st_size == 0:
@@ -218,20 +231,33 @@ class DownloadStage:
         if on_progress:
             on_progress(0.0, DOWNLOAD_EXTRACTING_INFO)
 
-        # Bytes of every file this download has finished, so the running total
-        # spans both halves of a video+audio merge rather than resetting.
-        completed_bytes = 0
+        # Size of every file this download has finished, keyed by the path
+        # yt-dlp reports. A video+audio merge finishes two files and both have
+        # to count, but a *retry* re-reports the half that already succeeded
+        # (yt-dlp reuses the complete file and still fires `finished` for it).
+        # Keying by name makes the second report overwrite rather than add; a
+        # running total would reject the retry for bytes it already counted.
+        completed: dict[str, int] = {}
 
         def progress_hook(d: dict[str, Any]) -> None:
-            nonlocal completed_bytes
+            name = d.get("filename") or ""
             if d["status"] == "downloading":
-                # The only bound that survives a source which under-reports or
-                # omits its size: the pre-download check cannot see those, and
-                # yt-dlp's own max_filesize silently skips the download instead
-                # of failing, leaving the caller with "no video file was found".
-                self._guard_download_size(completed_bytes + d.get("downloaded_bytes", 0))
+                # Everything finished *except* this file: its live byte count
+                # supersedes any total recorded for it on an earlier attempt.
+                #
+                # This is the only bound that survives a source which
+                # under-reports or omits its size. The pre-download check
+                # cannot see those, and yt-dlp's own max_filesize silently
+                # skips the download instead of failing, leaving the caller
+                # with "no video file was found".
+                others = sum(size for other, size in completed.items() if other != name)
+                self._guard_download_size(others + d.get("downloaded_bytes", 0))
             elif d["status"] == "finished":
-                completed_bytes += d.get("total_bytes") or d.get("downloaded_bytes", 0)
+                completed[name] = d.get("total_bytes") or d.get("downloaded_bytes") or 0
+                # External downloaders never emit `downloading` at all --
+                # yt-dlp's ExternalFD reports a single `finished` event -- so
+                # without this the cap is never consulted for them.
+                self._guard_download_size(sum(completed.values()))
 
             if not on_progress:
                 return
@@ -280,7 +306,18 @@ class DownloadStage:
                     partial.unlink(missing_ok=True)
             raise
 
-        context["input_path"] = str(self._resolve_downloaded_path(info, download_dir))
+        downloaded = self._resolve_downloaded_path(info, download_dir)
+        # Last line: the progress events describe what a downloader *says* it
+        # fetched, and a merge writes a file neither event covers. This is the
+        # byte count that actually occupies the disk, so it is the one the cap
+        # has to agree with. Removing the file keeps an over-cap download from
+        # leaving its bytes behind, the same way a failed attempt does.
+        landed_bytes = downloaded.stat().st_size
+        if self._max_download_size and landed_bytes > self._max_download_size:
+            downloaded.unlink(missing_ok=True)
+        self._guard_download_size(landed_bytes)
+
+        context["input_path"] = str(downloaded)
         context["video_title"] = info.get("title", "")
         return context
 
@@ -312,9 +349,7 @@ class DownloadStage:
         source fails immediately instead of being retried three times.
         """
         if self._max_download_size and total_bytes > self._max_download_size:
-            raise DownloadError(
-                f"Media is larger than the maximum allowed ({self._max_download_size / (1024 * 1024):.0f} MB)."
-            )
+            raise DownloadError(f"Media is larger than the maximum allowed ({_as_size(self._max_download_size)}).")
 
     @staticmethod
     def _declared_size(info: dict[str, Any]) -> int:
@@ -354,14 +389,14 @@ class DownloadStage:
                 if "twitter" in allowed_extractors and any(m in msg for m in _TWITTER_RESTRICTED_MARKERS):
                     raise DownloadError(DOWNLOAD_TWITTER_RESTRICTED) from e
                 if not any(m in msg for m in YT_DLP_TRANSIENT_MARKERS):
-                    raise DownloadError(f"Failed to download video: {e}") from e
+                    raise DownloadError(f"Failed to download video: {neutralise(str(e))}") from e
                 if attempt >= _MAX_DOWNLOAD_ATTEMPTS:
                     raise DownloadError(DOWNLOAD_SOURCE_TRANSIENT) from e
                 logger.warning(
                     "Download attempt %d/%d failed transiently (%s); retrying",
                     attempt,
                     _MAX_DOWNLOAD_ATTEMPTS,
-                    e,
+                    neutralise(str(e)),
                 )
                 time.sleep(_RETRY_BACKOFF_SECONDS * attempt)
         # Defensive: every loop iteration returns or raises above.
