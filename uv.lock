@@ -3977,6 +3977,7 @@ dev = [
     { name = "pytest-playwright" },
     { name = "python-docx" },
     { name = "yt-dlp" },
+    { name = "yt-dlp-ejs" },
 ]
 frontend = [
     { name = "argon2-cffi" },
@@ -3985,6 +3986,7 @@ frontend = [
     { name = "prometheus-client" },
     { name = "python-docx" },
     { name = "yt-dlp" },
+    { name = "yt-dlp-ejs" },
 ]
 worker = [
     { name = "ctranslate2" },
@@ -4002,6 +4004,10 @@ worker = [
 ]
 worker-llm = [
     { name = "httpx" },
+]
+ytdlp = [
+    { name = "yt-dlp" },
+    { name = "yt-dlp-ejs" },
 ]
 
 [package.metadata]
@@ -4031,11 +4037,12 @@ requires-dist = [
     { name = "rq", specifier = ">=2.9.1,<3" },
     { name = "transformers", marker = "extra == 'worker'", specifier = ">=5.12.0,<6" },
     { name = "whisper-ui", extras = ["frontend", "worker-llm"], marker = "extra == 'dev'" },
-    { name = "yt-dlp", marker = "extra == 'frontend'", specifier = ">=2026.6.9" },
-    { name = "yt-dlp", marker = "extra == 'worker'", specifier = ">=2026.6.9" },
-    { name = "yt-dlp-ejs", marker = "extra == 'worker'", specifier = ">=0.7.0" },
+    { name = "whisper-ui", extras = ["ytdlp"], marker = "extra == 'frontend'" },
+    { name = "whisper-ui", extras = ["ytdlp"], marker = "extra == 'worker'" },
+    { name = "yt-dlp", marker = "extra == 'ytdlp'", specifier = ">=2026.6.9" },
+    { name = "yt-dlp-ejs", marker = "extra == 'ytdlp'", specifier = ">=0.7.0" },
 ]
-provides-extras = ["frontend", "worker", "worker-llm", "dev"]
+provides-extras = ["frontend", "ytdlp", "worker", "worker-llm", "dev"]
 
 [[package]]
 name = "yarl"

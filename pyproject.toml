@@ -22,9 +22,23 @@ frontend = [
   # /metrics endpoint (Prometheus exposition).
   "prometheus-client>=0.21,<1",
   # Submit-time playlist flat-extraction (web/playlist.py): metadata only,
-  # media downloads stay in the worker. Version floor mirrors the worker
-  # extra so both resolve to the same release.
+  # media downloads stay in the worker.
+  "whisper-ui[ytdlp]",
+]
+# Everything that talks to yt-dlp, in one place so the frontend and the worker
+# cannot drift apart on it -- and so `dev` (which pulls frontend) installs the
+# same set CI then checks. Keeping yt-dlp-ejs in the worker extra alone meant
+# neither CI nor a dev checkout ever had it, and nothing in the suite noticed:
+# the download tests mock yt-dlp out entirely.
+ytdlp = [
   "yt-dlp>=2026.6.9",
+  # The JavaScript challenge solvers. yt-dlp pins the exact version it needs
+  # in its own [default]/[pin] extras; we depend on the package directly
+  # because those extras drag in eight more packages this project does not
+  # use, so test_ejs_matches_the_installed_yt_dlp checks the coupling instead
+  # of the resolver. Without it every extraction reports "Signature solving
+  # failed" and silently loses formats, because both call sites pass quiet.
+  "yt-dlp-ejs>=0.7.0",
 ]
 worker = [
   # whisperx is installed separately in Dockerfile (--no-deps) to avoid its
@@ -39,8 +53,7 @@ worker = [
   "pandas>=2.2.3",
   "pyannote.audio>=4.0.0",
   "opencc-python-reimplemented>=0.1.7",
-  "yt-dlp>=2026.6.9",
-  "yt-dlp-ejs>=0.7.0",
+  "whisper-ui[ytdlp]",
   "gdown>=6.1.0,<7",
 ]
 # Optional LLM correction stage. Only required when OLLAMA_BASE_URL is set.
