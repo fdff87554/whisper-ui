@@ -6,6 +6,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from whisper_ui.core.constants import YT_DLP_TRANSIENT_MARKERS
 from whisper_ui.core.ytdlp_logging import YtDlpLogger
 from whisper_ui.web.playlist import (
     PlaylistEmptyError,
@@ -97,6 +98,47 @@ class TestExpandPlaylistSuccess:
         # logger is the only thing keeping extraction failures inside the
         # logging framework.
         assert isinstance(opts["logger"], YtDlpLogger)
+
+
+class TestExpandPlaylistTransientFailures:
+    @pytest.mark.parametrize(
+        "message",
+        [
+            "HTTP Error 503: Service Unavailable",
+            "Service temporarily unavailable",
+            "HTTP Error 429: Too Many Requests",
+        ],
+    )
+    def test_server_side_blips_are_not_reported_as_a_missing_playlist(self, message: str):
+        # Every one of these contains a substring in _UNAVAILABLE_MARKERS, so
+        # without the transient check first the user is told their playlist is
+        # gone and goes off to recreate a playlist that is fine.
+        module = _make_mock_module(error=Exception(message))
+        with patch.dict("sys.modules", {"yt_dlp": module}), pytest.raises(PlaylistFetchError) as exc:
+            expand_playlist(PLAYLIST_URL, limit=50)
+
+        assert not isinstance(exc.value, PlaylistUnavailableError)
+
+    @pytest.mark.parametrize(
+        "message",
+        [
+            "This playlist is private",
+            "The playlist does not exist",
+            "Video unavailable",
+            "This playlist has been removed",
+        ],
+    )
+    def test_permanent_failures_still_report_the_playlist_as_inaccessible(self, message: str):
+        module = _make_mock_module(error=Exception(message))
+        with patch.dict("sys.modules", {"yt_dlp": module}), pytest.raises(PlaylistUnavailableError):
+            expand_playlist(PLAYLIST_URL, limit=50)
+
+    def test_transient_markers_are_shared_with_the_download_path(self):
+        # The two paths disagreeing about what "unavailable" means is the bug
+        # this classification order exists to close.
+        from whisper_ui.pipeline.download import YT_DLP_TRANSIENT_MARKERS as download_markers
+
+        assert download_markers is YT_DLP_TRANSIENT_MARKERS
 
 
 class TestExpandPlaylistTooLarge:

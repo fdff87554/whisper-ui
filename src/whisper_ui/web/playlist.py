@@ -6,7 +6,8 @@ import logging
 from dataclasses import dataclass
 from typing import Any
 
-from whisper_ui.core.constants import YT_DLP_SOCKET_TIMEOUT
+from whisper_ui.core.constants import YT_DLP_SOCKET_TIMEOUT, YT_DLP_TRANSIENT_MARKERS
+from whisper_ui.core.messages import DOWNLOAD_SOURCE_TRANSIENT
 from whisper_ui.core.url_validation import YouTubeURLError, validate_youtube_url
 from whisper_ui.core.ytdlp_logging import YtDlpLogger
 
@@ -18,7 +19,12 @@ logger = logging.getLogger(__name__)
 _UNAVAILABLE_TITLES = frozenset({"[private video]", "[deleted video]"})
 
 # Lowercase substring markers that classify an extraction failure as the
-# playlist itself being inaccessible (vs. a transient network/server error).
+# playlist itself being inaccessible -- permanently, from the user's side.
+# These are only consulted after YT_DLP_TRANSIENT_MARKERS has been ruled out:
+# the phrases yt-dlp uses for a throttled or briefly-down source ("HTTP Error
+# 503: Service Unavailable", "Service temporarily unavailable") also contain
+# "unavailable", and telling someone their playlist is gone when the server
+# merely hiccuped sends them to recreate a playlist that is fine.
 _UNAVAILABLE_MARKERS = ("private", "does not exist", "unavailable", "removed")
 
 
@@ -95,6 +101,11 @@ def expand_playlist(playlist_url: str, *, limit: int) -> PlaylistInfo:
             info = ydl.extract_info(playlist_url, download=False)
     except Exception as e:
         msg = str(e).lower()
+        if any(m in msg for m in YT_DLP_TRANSIENT_MARKERS):
+            # Order matters: this has to win over _UNAVAILABLE_MARKERS below.
+            # No traceback -- a throttled or briefly-down source is routine.
+            logger.warning("Playlist source responded transiently: %s (url=%s)", e, playlist_url)
+            raise PlaylistFetchError(DOWNLOAD_SOURCE_TRANSIENT) from e
         if any(m in msg for m in _UNAVAILABLE_MARKERS):
             # One line, no traceback: an inaccessible playlist is routine user
             # data, but the original message is kept visible so a blocked
