@@ -31,7 +31,7 @@ frontend = [
 # neither CI nor a dev checkout ever had it, and nothing in the suite noticed:
 # the download tests mock yt-dlp out entirely.
 ytdlp = [
-  "yt-dlp>=2026.6.9",
+  "yt-dlp>=2026.8.19",
   # The JavaScript challenge solvers. yt-dlp pins the exact version it needs
   # in its own [default]/[pin] extras; we depend on the package directly
   # because those extras drag in eight more packages this project does not
