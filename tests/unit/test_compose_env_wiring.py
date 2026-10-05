@@ -26,7 +26,7 @@ _NOT_WIRED: dict[str, str] = {
     # sets it still serves /metrics unauthenticated. Tracked separately rather
     # than fixed here, because it is a security default and deserves its own
     # review rather than riding along in a download-size change.
-    "metrics_token": "ISSUE_PLACEHOLDER",
+    "metrics_token": "#178",
 }
 
 
