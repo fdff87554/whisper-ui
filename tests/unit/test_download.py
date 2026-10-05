@@ -513,6 +513,38 @@ class TestDownloadStageWithMock:
 
         assert isinstance(mock_module.YoutubeDL.call_args.args[0]["logger"], YtDlpLogger)
 
+    @pytest.mark.parametrize(
+        "payload",
+        ["evil\u2028INFO: done", "evil\rINFO: done", "evil\x1b[2KINFO: done"],
+        ids=["line-separator", "carriage-return", "ansi-erase"],
+    )
+    def test_upstream_error_text_cannot_forge_a_line(self, context, download_dir, payload):
+        # yt-dlp quotes the video title in its error, so the text in this
+        # exception is remote-controlled. It reaches both the log and the
+        # job's error message, and neither should be splittable.
+        mock_module = MagicMock()
+        mock_ydl = MagicMock()
+
+        def failing(url, download=True):
+            if download:
+                raise RuntimeError(payload)
+            return {"duration": 120, "title": "Test Video"}
+
+        mock_ydl.extract_info = failing
+        mock_ydl.__enter__ = lambda self: self
+        mock_ydl.__exit__ = MagicMock(return_value=False)
+        mock_module.YoutubeDL.return_value = mock_ydl
+
+        with (
+            patch.dict("sys.modules", {"yt_dlp": mock_module}),
+            pytest.raises(DownloadError) as exc,
+        ):
+            DownloadStage().execute(context)
+
+        message = str(exc.value)
+        assert len(message.splitlines()) == 1
+        assert not any(ch in message for ch in "\r\x1b")
+
     def test_cleanup_is_noop(self):
         stage = DownloadStage()
         stage.cleanup()  # Should not raise
