@@ -141,6 +141,39 @@ class TestExpandPlaylistTransientFailures:
         assert download_markers is YT_DLP_TRANSIENT_MARKERS
 
 
+class TestUpstreamTextCannotForgeALine:
+    @pytest.mark.parametrize(
+        "payload",
+        ["gone\u2028INFO: ok", "gone\rINFO: ok", "gone\x1b[2KINFO: ok"],
+        ids=["line-separator", "carriage-return", "ansi-erase"],
+    )
+    def test_the_message_shown_to_the_submitter_is_single_line(self, payload: str):
+        # yt-dlp quotes the playlist or video title, so this text is
+        # remote-controlled and it reaches the submitter, not just the log.
+        module = _make_mock_module(error=Exception(f"This playlist is private: {payload}"))
+        with (
+            patch.dict("sys.modules", {"yt_dlp": module}),
+            pytest.raises(PlaylistUnavailableError) as exc,
+        ):
+            expand_playlist(PLAYLIST_URL, limit=50)
+
+        message = str(exc.value)
+        assert len(message.splitlines()) == 1
+        assert not any(ch in message for ch in "\r\x1b")
+
+    def test_the_log_record_is_single_line(self, caplog):
+        module = _make_mock_module(error=Exception("This playlist is private: a\u2028b"))
+        with (
+            patch.dict("sys.modules", {"yt_dlp": module}),
+            caplog.at_level(logging.WARNING, logger="whisper_ui.web.playlist"),
+            pytest.raises(PlaylistUnavailableError),
+        ):
+            expand_playlist(PLAYLIST_URL, limit=50)
+
+        assert caplog.records
+        assert len(caplog.records[0].getMessage().splitlines()) == 1
+
+
 class TestExpandPlaylistTooLarge:
     def test_over_limit_raises_with_reported_count(self):
         info = {"title": "Big", "playlist_count": 250, "entries": [_entry(f"vid{i:08d}") for i in range(3)]}
