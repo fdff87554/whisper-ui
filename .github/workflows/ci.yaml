@@ -2,8 +2,12 @@ name: CI
 on:
   push:
     branches: [main]
+  # No branches filter on pull_request: that filter matches a pull request's
+  # *base*, so restricting it to main left every pull request in a stacked
+  # series with no checks at all -- only the one at the bottom targets main.
+  # Observed on a seven-PR stack where six had zero checks and still showed as
+  # mergeable.
   pull_request:
-    branches: [main]
 # Minimal token: CI only reads the repo (checkout) and builds; no writes.
 permissions:
   contents: read

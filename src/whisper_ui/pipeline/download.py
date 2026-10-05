@@ -347,6 +347,25 @@ class DownloadStage:
         Raising ``DownloadError`` rather than a private exception matters:
         ``_extract_with_retries`` re-raises it untouched, so an oversized
         source fails immediately instead of being retried three times.
+
+        **When this stops a download part-way, and when it does not.** The
+        guard runs from the progress hook, so it can only interrupt a
+        downloader that reports progress. yt-dlp picks one per protocol
+        (``downloader/__init__.py``): ``https`` and ``http_dash_segments``
+        report continuously, and ``m3u8_native`` reports per fragment, so
+        for all of those the cap stops the transfer mid-flight.
+
+        ``m3u8`` maps to ``FFmpegFD``, which inherits ``ExternalFD`` and
+        emits a single ``finished`` event when the child process exits. For
+        that one protocol an oversized file is written to disk in full, then
+        rejected and removed -- the bytes do not survive, but they do briefly
+        occupy the disk. Nothing here selects ``m3u8`` deliberately; the
+        format string prefers https mp4/m4a, so it would take a source that
+        offers nothing else.
+
+        Bounding the transient usage would need a watchdog polling the
+        partial file and killing the child, which is not worth the
+        concurrency for a path this project does not take on purpose.
         """
         if self._max_download_size and total_bytes > self._max_download_size:
             raise DownloadError(f"Media is larger than the maximum allowed ({_as_size(self._max_download_size)}).")

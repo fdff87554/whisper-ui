@@ -89,7 +89,7 @@ YT_DLP_TRANSIENT_MARKERS = (
 # yt-dlp without re-reading its error strings is how a heuristic like this
 # rots unnoticed, so test_markers_are_bound_to_the_installed_yt_dlp fails until
 # someone re-checks and moves this forward in the same commit.
-YT_DLP_MARKERS_VERIFIED_AGAINST = "2026.06.09"
+YT_DLP_MARKERS_VERIFIED_AGAINST = "2026.08.19"
 
 # Ceiling on the downloaded video track's height. The pipeline only needs the
 # audio; the video track is kept so the viewer can play back the original

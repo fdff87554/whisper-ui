@@ -64,6 +64,20 @@ class PlaylistInfo:
     unavailable_count: int
 
 
+def _neutralised_copy(error: Exception, detail: str) -> BaseException:
+    """The same exception and traceback, with a message safe to render.
+
+    Falls back to a plain RuntimeError when the class cannot be rebuilt from
+    a single string -- some exceptions take a different signature, and a
+    missing traceback is a far smaller loss than a crash inside logging.
+    """
+    try:
+        copy: BaseException = type(error)(detail)
+    except Exception:
+        copy = RuntimeError(detail)
+    return copy.with_traceback(error.__traceback__)
+
+
 def expand_playlist(playlist_url: str, *, limit: int) -> PlaylistInfo:
     """Resolve a canonical playlist URL into its videos' canonical watch URLs.
 
@@ -116,7 +130,17 @@ def expand_playlist(playlist_url: str, *, limit: int) -> PlaylistInfo:
             # egress that happens to match a marker can still be diagnosed.
             logger.warning("Playlist not accessible: %s (url=%s)", detail, playlist_url)
             raise PlaylistUnavailableError(f"Playlist is not accessible: {detail}") from e
-        logger.exception("Failed to fetch playlist metadata for %s", playlist_url)
+        # Frames are worth keeping for an unexpected failure, but the last
+        # line a traceback renders is the exception's own text -- the one
+        # place the remote string survives `detail`. Logging a copy whose
+        # message is already neutralised, carrying the original traceback,
+        # keeps every frame and renders nothing forgeable.
+        logger.error(
+            "Failed to fetch playlist metadata for %s: %s",
+            playlist_url,
+            detail,
+            exc_info=_neutralised_copy(e, detail),
+        )
         raise PlaylistFetchError(f"Failed to fetch playlist metadata: {detail}") from e
 
     if info is None:
