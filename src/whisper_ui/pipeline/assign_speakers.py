@@ -47,7 +47,10 @@ class AssignSpeakersStage:
             # past its deadline. Propagate unchanged.
             raise
         except Exception as e:
-            logger.warning("Speaker assignment failed: %s. Using aligned result without speakers.", e)
+            # %r, not %s: repr escapes control characters, so an exception
+            # message carrying CR, U+2028 or an ANSI escape cannot forge a
+            # second log line. Same reason finalize_failure logs detail=%r.
+            logger.warning("Speaker assignment failed: %r. Using aligned result without speakers.", e)
             context["final_result"] = aligned_result
             if on_progress:
                 on_progress(1.0, ASSIGN_FAILED)

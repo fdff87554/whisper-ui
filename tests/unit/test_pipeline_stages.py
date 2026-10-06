@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from itertools import pairwise
 from unittest.mock import MagicMock, patch
 
@@ -602,3 +603,25 @@ class TestAssignSpeakersStage:
 
         assert result["final_result"] is aligned
         assert progress_calls[-1] == (1.0, ASSIGN_FAILED)
+
+    def test_a_failure_message_cannot_forge_a_second_log_line(self, caplog):
+        """The fallback logs the exception text, so a control character in it
+        would put an attacker-shaped line into the operator log.
+
+        U+2028 is the interesting one: it is Zl, not a C-category character,
+        so a control-character filter misses it while ``str.splitlines()``
+        still breaks on it. ``%r`` escapes all of them.
+        """
+        stage = AssignSpeakersStage()
+        mock_whisperx = MagicMock()
+        mock_whisperx.assign_word_speakers.side_effect = RuntimeError("boom\u2028ERROR forged line\r\n\x1b[31mred")
+
+        with patch.dict("sys.modules", {"whisperx": mock_whisperx}), caplog.at_level(logging.WARNING):
+            stage.execute({"diarize_result": "data", "aligned_result": {"segments": []}})
+
+        records = [r for r in caplog.records if "Speaker assignment failed" in r.getMessage()]
+        assert len(records) == 1
+        message = records[0].getMessage()
+        assert len(message.splitlines()) == 1, message
+        assert "\u2028" not in message
+        assert "\x1b" not in message
