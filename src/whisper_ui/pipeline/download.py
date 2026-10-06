@@ -28,6 +28,7 @@ from whisper_ui.core.url_validation import (
     is_twitter_url,
     is_valid_gdrive_file_id,
 )
+from whisper_ui.core.ytdlp_logging import YtDlpLogger, neutralise
 
 if TYPE_CHECKING:
     from whisper_ui.pipeline.base import ProgressCallback
@@ -196,7 +197,7 @@ class DownloadStage:
         except BaseTimeoutException:
             raise
         except Exception as e:
-            raise DownloadError(f"Failed to download from Google Drive: {e}") from e
+            raise DownloadError(f"Failed to download from Google Drive: {neutralise(str(e))}") from e
 
         downloaded = Path(result)
         if not downloaded.is_file() or downloaded.stat().st_size == 0:
@@ -301,6 +302,9 @@ class DownloadStage:
             "progress_hooks": [progress_hook],
             "quiet": True,
             "no_warnings": True,
+            # quiet/no_warnings do not cover YoutubeDL.trouble(), which
+            # writes straight to stderr; see whisper_ui.core.ytdlp_logging.
+            "logger": YtDlpLogger(logger),
         }
         # Operator-supplied login cookies (X login-walled / age-restricted posts).
         # Only set when the file actually exists, so an unset/missing path stays
@@ -428,14 +432,14 @@ class DownloadStage:
                 if "twitter" in allowed_extractors and any(m in msg for m in _TWITTER_RESTRICTED_MARKERS):
                     raise DownloadError(DOWNLOAD_TWITTER_RESTRICTED) from e
                 if not any(m in msg for m in _RETRYABLE_MARKERS):
-                    raise DownloadError(f"Failed to download video: {e}") from e
+                    raise DownloadError(f"Failed to download video: {neutralise(str(e))}") from e
                 if attempt >= _MAX_DOWNLOAD_ATTEMPTS:
                     raise DownloadError(DOWNLOAD_SOURCE_TRANSIENT) from e
                 logger.warning(
                     "Download attempt %d/%d failed transiently (%s); retrying",
                     attempt,
                     _MAX_DOWNLOAD_ATTEMPTS,
-                    e,
+                    neutralise(str(e)),
                 )
                 time.sleep(_RETRY_BACKOFF_SECONDS * attempt)
         # Defensive: every loop iteration returns or raises above.

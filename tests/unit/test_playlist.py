@@ -6,6 +6,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from whisper_ui.core.ytdlp_logging import YtDlpLogger
 from whisper_ui.web.playlist import (
     PlaylistEmptyError,
     PlaylistFetchError,
@@ -92,6 +93,10 @@ class TestExpandPlaylistSuccess:
         assert opts["allowed_extractors"] == ["youtube:tab"]
         assert opts["playlist_items"] == "1:51"
         assert opts["socket_timeout"] > 0
+        # quiet/no_warnings leave YoutubeDL.trouble() writing to stderr, so a
+        # logger is the only thing keeping extraction failures inside the
+        # logging framework.
+        assert isinstance(opts["logger"], YtDlpLogger)
 
 
 class TestExpandPlaylistTooLarge:

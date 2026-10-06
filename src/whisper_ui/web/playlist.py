@@ -8,6 +8,7 @@ from typing import Any
 
 from whisper_ui.core.constants import YT_DLP_SOCKET_TIMEOUT
 from whisper_ui.core.url_validation import YouTubeURLError, validate_youtube_url
+from whisper_ui.core.ytdlp_logging import YtDlpLogger
 
 logger = logging.getLogger(__name__)
 
@@ -84,6 +85,9 @@ def expand_playlist(playlist_url: str, *, limit: int) -> PlaylistInfo:
         "socket_timeout": YT_DLP_SOCKET_TIMEOUT,
         "quiet": True,
         "no_warnings": True,
+        # quiet/no_warnings do not cover YoutubeDL.trouble(), which writes
+        # straight to stderr; see whisper_ui.core.ytdlp_logging.
+        "logger": YtDlpLogger(logger),
     }
 
     try:
