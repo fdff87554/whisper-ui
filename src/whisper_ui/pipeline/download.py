@@ -371,13 +371,19 @@ class DownloadStage:
         downloader that reports progress. yt-dlp picks one per protocol
         (``downloader/__init__.py``): ``https`` and ``http_dash_segments``
         report continuously, and ``m3u8_native`` reports per fragment, so
-        for all of those the cap stops the transfer mid-flight.
+        on those the cap stops the transfer mid-flight.
 
-        ``m3u8`` maps to ``FFmpegFD``, which inherits ``ExternalFD`` and
-        emits a single ``finished`` event when the child process exits. For
-        that one protocol an oversized file is written to disk in full, then
+        An external downloader does not report progress. ``FFmpegFD``
+        inherits ``ExternalFD`` and emits a single ``finished`` event when
+        the child process exits, and two routes reach it. The ``m3u8``
+        protocol maps to it directly. ``m3u8_native`` also hands it the
+        *whole* transfer whenever ``HlsFD`` cannot handle the manifest
+        itself (``downloader/hls.py``, ``can_download`` -> ``FFmpegFD``):
+        non-AES-128 ``#EXT-X-KEY``, or AES-128 with ffmpeg present and
+        pycryptodomex absent, which is exactly this project's worker image.
+        On those routes an oversized file is written to disk in full, then
         rejected and removed -- the bytes do not survive, but they do briefly
-        occupy the disk. Nothing here selects ``m3u8`` deliberately; the
+        occupy the disk. Nothing here selects an HLS format deliberately; the
         format string prefers https mp4/m4a, so it would take a source that
         offers nothing else.
 
