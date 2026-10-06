@@ -13,7 +13,7 @@ dependencies = [
 
 [project.optional-dependencies]
 frontend = [
-  "fastapi[standard]>=0.136.3,<1",
+  "fastapi[standard]>=0.142.2,<1",
   "python-docx>=1.0,<2",
   "argon2-cffi>=25.1.0,<26",
   # SessionMiddleware needs itsdangerous to sign session cookies. It is
