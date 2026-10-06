@@ -47,7 +47,14 @@ class AssignSpeakersStage:
             # past its deadline. Propagate unchanged.
             raise
         except Exception as e:
-            logger.warning("Speaker assignment failed: %s. Using aligned result without speakers.", e)
+            # %r over str(e), not over the exception: repr escapes control
+            # characters, so a message carrying CR, U+2028 or an ANSI escape
+            # cannot forge a second log line. The argument is the string
+            # because __repr__ is overridable -- an exception whose __repr__
+            # returns its message verbatim would put the raw text straight
+            # into the log. finalize_failure passes str(exc_value) for the
+            # same reason.
+            logger.warning("Speaker assignment failed: %r. Using aligned result without speakers.", str(e))
             context["final_result"] = aligned_result
             if on_progress:
                 on_progress(1.0, ASSIGN_FAILED)

@@ -1402,6 +1402,43 @@ def test_persist_completion_save_failure_on_salvage_marks_failed_not_stuck(monke
     assert PipelineContextStore(redis, job.id).load() == {}
 
 
+def test_persist_failure_keeps_the_raw_exception_out_of_the_user_error(monkeypatch, tmp_path):
+    """job.error is rendered to the user (_job_card.html); an OSError from this
+    path carries the internal result-file path.
+
+    format_failure_message already keeps raw str(exc_value) off the RQ failure
+    path for exactly this reason; this site used to interpolate it anyway. The
+    operator still gets the full detail from the logger.exception above.
+    """
+    from whisper_ui.core.messages import RESULT_PERSIST_FAILED
+    from whisper_ui.core.models import TranscriptResult
+    from whisper_ui.worker import pipeline_dispatcher as pd
+
+    redis = fakeredis.FakeRedis()
+    job = Job(
+        id="job-persist-no-leak",
+        filename="m.mp3",
+        filepath=str(tmp_path / "m.mp3"),
+        status=JobStatus.PROCESSING,
+        llm_correction_enabled=True,
+    )
+    enqueue_pipeline(job, redis=redis, settings=_build_settings(), filestore=_build_filestore(tmp_path))
+    llm_sub = _by_stage(_load_subjobs(redis, job.id))["run_llm_correction"]
+    PipelineContextStore(redis, job.id).update({"transcript_result": TranscriptResult(language="zh", duration=42.0)})
+
+    leak = OSError("[Errno 28] No space left on device: '/srv/whisper/outputs/secret-job/result.json'")
+    _, builder = _build_completion_runtime(redis, job, tmp_path, save_side_effect=leak)
+    monkeypatch.setattr(pd, "build_worker_runtime", builder)
+
+    pd.finalize_failure(llm_sub, redis, RuntimeError, RuntimeError("llm crashed"), None)
+
+    assert job.status == JobStatus.FAILED
+    assert job.error == RESULT_PERSIST_FAILED
+    assert "/srv/whisper/outputs" not in (job.error or "")
+    assert "Errno 28" not in (job.error or "")
+    assert "/srv/whisper/outputs" not in (job.progress_message or "")
+
+
 def test_finalize_success_save_failure_marks_failed(monkeypatch, tmp_path):
     """The same guard protects the normal completion path: a save_result
     failure in finalize_success marks FAILED instead of leaving PROCESSING

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from itertools import pairwise
 from unittest.mock import MagicMock, patch
 
@@ -602,3 +603,56 @@ class TestAssignSpeakersStage:
 
         assert result["final_result"] is aligned
         assert progress_calls[-1] == (1.0, ASSIGN_FAILED)
+
+    def test_a_failure_message_cannot_forge_a_second_log_line(self, caplog):
+        """The fallback logs the exception text, so a control character in it
+        would put an attacker-shaped line into the operator log.
+
+        U+2028 is the interesting one: it is Zl, not a C-category character,
+        so a control-character filter misses it while ``str.splitlines()``
+        still breaks on it. ``%r`` escapes all of them.
+        """
+        stage = AssignSpeakersStage()
+        mock_whisperx = MagicMock()
+        mock_whisperx.assign_word_speakers.side_effect = RuntimeError("boom\u2028ERROR forged line\r\n\x1b[31mred")
+
+        with patch.dict("sys.modules", {"whisperx": mock_whisperx}), caplog.at_level(logging.WARNING):
+            stage.execute({"diarize_result": "data", "aligned_result": {"segments": []}})
+
+        records = [r for r in caplog.records if "Speaker assignment failed" in r.getMessage()]
+        assert len(records) == 1
+        message = records[0].getMessage()
+        assert len(message.splitlines()) == 1, message
+        assert "\u2028" not in message
+        assert "\x1b" not in message
+
+    def test_a_custom_repr_cannot_forge_a_second_log_line_either(self, caplog):
+        """PR #184 review: ``%r`` on the exception object would use its own
+        ``__repr__``, which an exception class is free to override.
+
+        Logging ``str(e)`` instead keeps ``repr`` applied to an already-
+        evaluated string, so neither a custom ``__repr__`` nor a custom
+        ``__str__`` can reach the log unescaped. Whether anything under
+        whisperx actually does this is unverified -- the ``except`` here is a
+        bare ``Exception``, so the set of reachable classes is not something
+        this test can enumerate.
+        """
+        forged = "boom\u2028ERROR forged line\r\n\x1b[31mred"
+
+        class ReprOverridden(RuntimeError):
+            def __repr__(self) -> str:
+                return forged
+
+        stage = AssignSpeakersStage()
+        mock_whisperx = MagicMock()
+        mock_whisperx.assign_word_speakers.side_effect = ReprOverridden(forged)
+
+        with patch.dict("sys.modules", {"whisperx": mock_whisperx}), caplog.at_level(logging.WARNING):
+            stage.execute({"diarize_result": "data", "aligned_result": {"segments": []}})
+
+        records = [r for r in caplog.records if "Speaker assignment failed" in r.getMessage()]
+        assert len(records) == 1
+        message = records[0].getMessage()
+        assert len(message.splitlines()) == 1, message
+        assert "\u2028" not in message
+        assert "\x1b" not in message

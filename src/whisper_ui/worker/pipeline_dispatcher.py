@@ -429,7 +429,7 @@ def _persist_completion(
             # stale warning persisted by a previous degenerate attempt.
             job.quality_warning = context.get("quality_warning")
             runtime.db.update_job(job)
-        except Exception as exc:
+        except Exception:
             # Persisting the finished transcript failed (e.g. disk full writing
             # the result file, or a DB error). Never leave the parent stuck in
             # PROCESSING: mark it FAILED so the UI and the stale reaper reflect
@@ -438,8 +438,13 @@ def _persist_completion(
             # If the DB write itself is what failed, mark_failed re-raises and
             # the liveness-based stale reaper is the backstop — nothing at this
             # layer can persist a status while the DB is unavailable.
+            # The raw exception stays in the log above and out of job.error:
+            # an OSError from this path carries the internal result-file path,
+            # and job.error is rendered to the user in _job_card.html. This is
+            # the policy format_failure_message already states for the RQ
+            # failure path; this site was the one exception to it.
             logger.exception("Failed to persist completion for job %s; marking FAILED", job.id)
-            mark_failed(job, runtime.db, reporter, f"{RESULT_PERSIST_FAILED}: {exc}")
+            mark_failed(job, runtime.db, reporter, RESULT_PERSIST_FAILED)
             return
         # The DB durably says COMPLETED now; the Redis terminal write is
         # best-effort. Swallow its errors (log only) so a Redis hiccup can
