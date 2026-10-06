@@ -116,8 +116,31 @@ select = [
   "T20", # flake8-print
   "RET", # flake8-return
   "PTH", # flake8-use-pathlib
+  # The three flake8-bandit rules that catch a shell in the loop. Every
+  # ffmpeg, whisper-cli and yt-dlp invocation here is list-form and carries
+  # user-supplied text (a URL, a filename), so a shell appearing in that path
+  # is the difference between an argument and a command. S603 ("untrusted
+  # input in subprocess") is left off deliberately: it fires on the list-form
+  # calls too, so it would mean a noqa on each one and a habit of adding more.
+  "S602", # subprocess with shell=True
+  "S604", # any call with shell=True
+  "S605", # os.system
+  # The S rules above only know about subprocess and os: asyncio's own shell
+  # spawner goes unflagged by all three. Nothing here uses asyncio
+  # subprocesses, so this bans a door rather than closing one. See
+  # flake8-tidy-imports below for what it does and does not reach.
+  "TID", # flake8-tidy-imports (TID251 banned-api)
 ]
 ignore = ["RUF012"]
+
+# TID251 resolves names through imports, so it catches both the qualified
+# call and the from-import (including an aliased one). It cannot catch
+# `loop.subprocess_shell(...)`: that is an attribute on a local variable and
+# ruff has no type to resolve it from, so that form still needs review rather
+# than lint.
+[tool.ruff.lint.flake8-tidy-imports.banned-api]
+"asyncio.create_subprocess_shell".msg = "starts a shell; use create_subprocess_exec with an argument list"
+"asyncio.subprocess.create_subprocess_shell".msg = "starts a shell; use create_subprocess_exec with an argument list"
 
 [tool.ruff.lint.per-file-ignores]
 "__init__.py" = ["F401"]
