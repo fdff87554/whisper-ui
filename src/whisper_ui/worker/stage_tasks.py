@@ -386,6 +386,7 @@ def run_download(parent_job_id: str) -> str:
                 else runtime.settings.youtube_max_duration
             ),
             max_file_size=runtime.settings.max_upload_size,
+            max_download_size=runtime.settings.youtube_max_download_size,
             twitter_cookies_file=runtime.settings.twitter_cookies_file,
         ),
         output_keys=("input_path", "video_title"),

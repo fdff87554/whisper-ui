@@ -83,12 +83,26 @@ _MAX_DOWNLOAD_ATTEMPTS = 3
 _RETRY_BACKOFF_SECONDS = 2
 
 
+def _as_size(size_bytes: int) -> str:
+    """Render a byte count for a user-facing message.
+
+    Picks the unit from the magnitude. A fixed "MB" rendered the default
+    8 GiB cap as "8192 MB" and anything under half a megabyte as "0 MB",
+    which told a reader with a small cap that nothing was allowed at all.
+    """
+    for unit, scale in (("GB", 1024**3), ("MB", 1024**2), ("KB", 1024)):
+        if size_bytes >= scale:
+            return f"{size_bytes / scale:.1f} {unit}"
+    return f"{size_bytes} bytes"
+
+
 class DownloadStage:
     def __init__(
         self,
         *,
         max_duration: int = 14400,
         max_file_size: int = 0,
+        max_download_size: int = 0,
         twitter_cookies_file: str | None = None,
     ) -> None:
         # max_file_size guards the Google Drive path, which has no duration
@@ -96,6 +110,11 @@ class DownloadStage:
         # passes the same limit as direct file uploads (max_upload_size).
         self._max_duration = max_duration
         self._max_file_size = max_file_size
+        # Separate, looser bound for the yt-dlp path: there the duration cap is
+        # the primary limit and this only has to stop a runaway, so it must sit
+        # above any legitimate source at that duration rather than at the
+        # upload limit. 0 disables the check.
+        self._max_download_size = max_download_size
         self._twitter_cookies_file = twitter_cookies_file
 
     @property
@@ -229,7 +248,34 @@ class DownloadStage:
         if on_progress:
             on_progress(0.0, DOWNLOAD_EXTRACTING_INFO)
 
+        # Size of every file this download has finished, keyed by the path
+        # yt-dlp reports. A video+audio merge finishes two files and both have
+        # to count, but a *retry* re-reports the half that already succeeded
+        # (yt-dlp reuses the complete file and still fires `finished` for it).
+        # Keying by name makes the second report overwrite rather than add; a
+        # running total would reject the retry for bytes it already counted.
+        completed: dict[str, int] = {}
+
         def progress_hook(d: dict[str, Any]) -> None:
+            name = d.get("filename") or ""
+            if d["status"] == "downloading":
+                # Everything finished *except* this file: its live byte count
+                # supersedes any total recorded for it on an earlier attempt.
+                #
+                # This is the only bound that survives a source which
+                # under-reports or omits its size. The pre-download check
+                # cannot see those, and yt-dlp's own max_filesize silently
+                # skips the download instead of failing, leaving the caller
+                # with "no video file was found".
+                others = sum(size for other, size in completed.items() if other != name)
+                self._guard_download_size(others + d.get("downloaded_bytes", 0))
+            elif d["status"] == "finished":
+                completed[name] = d.get("total_bytes") or d.get("downloaded_bytes") or 0
+                # External downloaders never emit `downloading` at all --
+                # yt-dlp's ExternalFD reports a single `finished` event -- so
+                # without this the cap is never consulted for them.
+                self._guard_download_size(sum(completed.values()))
+
             if not on_progress:
                 return
             if d["status"] == "downloading":
@@ -262,9 +308,30 @@ class DownloadStage:
         if cookiefile:
             ydl_opts["cookiefile"] = cookiefile
 
-        info = self._extract_with_retries(yt_dlp, source_url, ydl_opts, allowed_extractors=allowed_extractors)
+        try:
+            info = self._extract_with_retries(yt_dlp, source_url, ydl_opts, allowed_extractors=allowed_extractors)
+        except BaseException:
+            # An aborted download leaves "video.fNNN.mp4.part" behind. The
+            # stale sweep above only runs before the next attempt, so without
+            # this the bytes sit on disk until the job is deleted -- which is
+            # exactly the disk the byte cap exists to protect.
+            for partial in download_dir.glob("video.*"):
+                if partial.is_file():
+                    partial.unlink(missing_ok=True)
+            raise
 
-        context["input_path"] = str(self._resolve_downloaded_path(info, download_dir))
+        downloaded = self._resolve_downloaded_path(info, download_dir)
+        # Last line: the progress events describe what a downloader *says* it
+        # fetched, and a merge writes a file neither event covers. This is the
+        # byte count that actually occupies the disk, so it is the one the cap
+        # has to agree with. Removing the file keeps an over-cap download from
+        # leaving its bytes behind, the same way a failed attempt does.
+        landed_bytes = downloaded.stat().st_size
+        if self._max_download_size and landed_bytes > self._max_download_size:
+            downloaded.unlink(missing_ok=True)
+        self._guard_download_size(landed_bytes)
+
+        context["input_path"] = str(downloaded)
         context["video_title"] = info.get("title", "")
         return context
 
@@ -287,6 +354,51 @@ class DownloadStage:
         if not candidates:
             raise DownloadError("Download completed but no video file was found.")
         return candidates[0]
+
+    def _guard_download_size(self, total_bytes: int) -> None:
+        """Reject a download once it passes the byte cap.
+
+        Raising ``DownloadError`` rather than a private exception matters:
+        ``_extract_with_retries`` re-raises it untouched, so an oversized
+        source fails immediately instead of being retried three times.
+
+        **When this stops a download part-way, and when it does not.** The
+        guard runs from the progress hook, so it can only interrupt a
+        downloader that reports progress. yt-dlp picks one per protocol
+        (``downloader/__init__.py``): ``https`` and ``http_dash_segments``
+        report continuously, and ``m3u8_native`` reports per fragment, so
+        on those the cap stops the transfer mid-flight.
+
+        An external downloader does not report progress. ``FFmpegFD``
+        inherits ``ExternalFD`` and emits a single ``finished`` event when
+        the child process exits, and two routes reach it. The ``m3u8``
+        protocol maps to it directly. ``m3u8_native`` also hands it the
+        *whole* transfer whenever ``HlsFD`` cannot handle the manifest
+        itself (``downloader/hls.py``, ``can_download`` -> ``FFmpegFD``):
+        non-AES-128 ``#EXT-X-KEY``, or AES-128 with ffmpeg present and
+        pycryptodomex absent, which is exactly this project's worker image.
+        On those routes an oversized file is written to disk in full, then
+        rejected and removed -- the bytes do not survive, but they do briefly
+        occupy the disk. Nothing here selects an HLS format deliberately; the
+        format string prefers https mp4/m4a, so it would take a source that
+        offers nothing else.
+
+        Bounding the transient usage would need a watchdog polling the
+        partial file and killing the child, which is not worth the
+        concurrency for a path this project does not take on purpose.
+        """
+        if self._max_download_size and total_bytes > self._max_download_size:
+            raise DownloadError(f"Media is larger than the maximum allowed ({_as_size(self._max_download_size)}).")
+
+    @staticmethod
+    def _declared_size(info: dict[str, Any]) -> int:
+        """Bytes the probe says the selected formats add up to, 0 when unknown.
+
+        A merge reports its halves in ``requested_formats``; a single
+        progressive stream reports its own size on the info dict.
+        """
+        formats = info.get("requested_formats") or [info]
+        return sum((f.get("filesize") or f.get("filesize_approx") or 0) for f in formats)
 
     def _extract_with_retries(
         self,
@@ -351,6 +463,10 @@ class DownloadStage:
                 raise DownloadError(
                     f"Video duration ({duration}s) exceeds the maximum allowed ({self._max_duration / 3600:g}h)."
                 )
+
+            # Cheapest place to stop an oversized source: the probe already
+            # ran, so a declared size over the cap costs no bytes at all.
+            self._guard_download_size(self._declared_size(info))
 
             info = ydl.extract_info(source_url, download=True)
             if info is None:

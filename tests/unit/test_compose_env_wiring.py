@@ -1,49 +1,61 @@
-"""Guard that deployer-facing settings actually reach the frontend container.
+"""Every setting an operator can set has to actually reach the containers.
 
-compose.yml has no ``env_file`` (see its header): a value reaches a container
-only when it is listed in an ``environment:`` map, directly or via a merged
-anchor. So a Settings field can exist and parse correctly yet be silently
-unreachable in a Compose deploy — the bug class caught in PR #156 review.
-This test fails if any such field stops being wired into the frontend service.
+compose.yml carries no `env_file`, so a value in `.env` applies only where
+compose names it explicitly. A Settings field with no matching compose entry
+is therefore unreachable in a deployment: the operator sets it, nothing
+reads it, and nothing says so. That is how YOUTUBE_MAX_DOWNLOAD_SIZE shipped
+with no way to configure or disable it.
 """
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
-import yaml
+import pytest
 
-_REPO_ROOT = Path(__file__).resolve().parents[2]
+from whisper_ui.core.config import Settings
 
-# Deployer-facing env vars the web app reads and must receive via Compose.
-_REQUIRED_FRONTEND_ENV = {
-    "DIARIZATION_DEFAULT_ENABLED",
-    "TRUSTED_PROXY_COUNT",
-    "MAX_REGISTER_ATTEMPTS_PER_IP",
-    "REDIS_SOCKET_TIMEOUT",
-    "REDIS_SOCKET_CONNECT_TIMEOUT",
-    "REDIS_HEALTH_CHECK_INTERVAL",
+_COMPOSE = Path(__file__).resolve().parents[2] / "compose.yml"
+
+# Settings that are deliberately not passed through compose, with the reason.
+# Adding to this needs a reason, which is the point: the default is wired.
+_NOT_WIRED: dict[str, str] = {
+    # Pre-existing and unrelated to the download cap: METRICS_TOKEN is
+    # documented in .env.example but reaches no container, so an operator who
+    # sets it still serves /metrics unauthenticated. Tracked separately rather
+    # than fixed here, because it is a security default and deserves its own
+    # review rather than riding along in a download-size change.
+    "metrics_token": "#178",
 }
 
 
-def _frontend_env_keys() -> set[str]:
-    compose = yaml.safe_load((_REPO_ROOT / "compose.yml").read_text())
-    keys: set[str] = set()
-    front = compose["services"]["frontend"].get("environment")
-    # PyYAML may or may not fold the `<<` merge into a plain dict; handle both,
-    # and fold the shared anchors explicitly as a belt-and-suspenders check.
-    if isinstance(front, dict):
-        keys |= set(front)
-    elif isinstance(front, list):
-        for item in front:
-            if isinstance(item, dict):
-                keys |= set(item)
-    for anchor in ("x-core-env", "x-timeout-env"):
-        block = compose.get(anchor) or {}
-        keys |= set(block)
-    return keys
+def _compose_env_names() -> set[str]:
+    # Environment keys in compose are the SCREAMING_SNAKE mapping entries,
+    # whether they sit in an x-*-env anchor or inline under a service.
+    return {name.lower() for name in re.findall(r"^\s{2,}([A-Z][A-Z0-9_]*):", _COMPOSE.read_text(), re.M)}
 
 
-def test_frontend_wires_all_required_deployer_settings():
-    missing = _REQUIRED_FRONTEND_ENV - _frontend_env_keys()
-    assert not missing, f"frontend compose environment is missing deployer settings: {sorted(missing)}"
+class TestEverySettingIsReachable:
+    def test_no_setting_is_missing_from_compose(self) -> None:
+        missing = sorted(set(Settings.model_fields) - _compose_env_names() - set(_NOT_WIRED))
+
+        assert not missing, (
+            "these settings cannot be configured in a deployment: "
+            f"{missing}. Add them to the matching x-*-env anchor in "
+            "compose.yml and to .env.example, or record why not in _NOT_WIRED."
+        )
+
+    @pytest.mark.parametrize("field", sorted(_NOT_WIRED))
+    def test_exemptions_still_exist(self, field: str) -> None:
+        # Stops the exemption list outliving the setting it excuses.
+        assert field in Settings.model_fields
+
+
+class TestTheDownloadCapIsReachable:
+    def test_the_cap_is_passed_to_the_workers(self) -> None:
+        # The four worker services share the x-download-env anchor; the cap
+        # belongs there next to the duration cap it backstops.
+        anchor = re.search(r"x-download-env: &download-env\n((?:\s{2}\S.*\n)+)", _COMPOSE.read_text())
+        assert anchor, "x-download-env anchor not found"
+        assert "YOUTUBE_MAX_DOWNLOAD_SIZE" in anchor.group(1)
