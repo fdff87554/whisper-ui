@@ -625,3 +625,34 @@ class TestAssignSpeakersStage:
         assert len(message.splitlines()) == 1, message
         assert "\u2028" not in message
         assert "\x1b" not in message
+
+    def test_a_custom_repr_cannot_forge_a_second_log_line_either(self, caplog):
+        """PR #184 review: ``%r`` on the exception object would use its own
+        ``__repr__``, which an exception class is free to override.
+
+        Logging ``str(e)`` instead keeps ``repr`` applied to an already-
+        evaluated string, so neither a custom ``__repr__`` nor a custom
+        ``__str__`` can reach the log unescaped. Whether anything under
+        whisperx actually does this is unverified -- the ``except`` here is a
+        bare ``Exception``, so the set of reachable classes is not something
+        this test can enumerate.
+        """
+        forged = "boom\u2028ERROR forged line\r\n\x1b[31mred"
+
+        class ReprOverridden(RuntimeError):
+            def __repr__(self) -> str:
+                return forged
+
+        stage = AssignSpeakersStage()
+        mock_whisperx = MagicMock()
+        mock_whisperx.assign_word_speakers.side_effect = ReprOverridden(forged)
+
+        with patch.dict("sys.modules", {"whisperx": mock_whisperx}), caplog.at_level(logging.WARNING):
+            stage.execute({"diarize_result": "data", "aligned_result": {"segments": []}})
+
+        records = [r for r in caplog.records if "Speaker assignment failed" in r.getMessage()]
+        assert len(records) == 1
+        message = records[0].getMessage()
+        assert len(message.splitlines()) == 1, message
+        assert "\u2028" not in message
+        assert "\x1b" not in message
