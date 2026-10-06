@@ -8,7 +8,11 @@ from urllib.parse import parse_qs, urlparse
 
 from rq.timeouts import BaseTimeoutException
 
-from whisper_ui.core.constants import YT_DLP_SOCKET_TIMEOUT
+from whisper_ui.core.constants import (
+    YT_DLP_FORMAT_SORT,
+    YT_DLP_SOCKET_TIMEOUT,
+    YT_DLP_VIDEO_FORMAT,
+)
 from whisper_ui.core.exceptions import DownloadError
 from whisper_ui.core.messages import (
     DOWNLOAD_DONE,
@@ -237,9 +241,10 @@ class DownloadStage:
                 on_progress(1.0, DOWNLOAD_DONE)
 
         ydl_opts: dict[str, Any] = {
-            "format": "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best",
+            "format": YT_DLP_VIDEO_FORMAT,
             "outtmpl": str(download_dir / "video.%(ext)s"),
             "merge_output_format": "mp4",
+            "format_sort": list(YT_DLP_FORMAT_SORT),
             "noplaylist": True,
             # Defense in depth: the URL is already whitelisted and canonicalised
             # by the validate_*_url helper, but pinning the extractor stops

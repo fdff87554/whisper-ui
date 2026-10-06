@@ -24,7 +24,7 @@ frontend = [
   # Submit-time playlist flat-extraction (web/playlist.py): metadata only,
   # media downloads stay in the worker. Version floor mirrors the worker
   # extra so both resolve to the same release.
-  "yt-dlp>=2026.6.9",
+  "yt-dlp>=2026.8.19",
 ]
 worker = [
   # whisperx is installed separately in Dockerfile (--no-deps) to avoid its
@@ -39,7 +39,7 @@ worker = [
   "pandas>=2.2.3",
   "pyannote.audio>=4.0.0",
   "opencc-python-reimplemented>=0.1.7",
-  "yt-dlp>=2026.6.9",
+  "yt-dlp>=2026.8.19",
   "yt-dlp-ejs>=0.7.0",
   "gdown>=6.1.0,<7",
 ]
