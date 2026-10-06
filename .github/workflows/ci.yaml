@@ -2,8 +2,12 @@ name: CI
 on:
   push:
     branches: [main]
+  # No branches filter on pull_request: that filter matches a pull request's
+  # *base*, so restricting it to main left every pull request in a stacked
+  # series with no checks at all -- only the one at the bottom targets main.
+  # Observed on a seven-PR stack where six had zero checks and still showed as
+  # mergeable.
   pull_request:
-    branches: [main]
 # Minimal token: CI only reads the repo (checkout) and builds; no writes.
 permissions:
   contents: read
@@ -26,8 +30,13 @@ jobs:
         run: uv python install ${{ matrix.python-version }}
       - name: Install dependencies
         run: uv sync --extra dev --frozen --python ${{ matrix.python-version }}
+      - name: Cache pre-commit environments
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/pre-commit
+          key: ${{ runner.os }}-pre-commit-${{ hashFiles('.pre-commit-config.yaml') }}
       - name: Lint
-        uses: pre-commit/action@2c7b3805fd2a0fd8c1884dcaebf91fc102a13ecd # v3.0.1
+        run: mise exec -- pre-commit run --show-diff-on-failure --color=always --all-files
       - name: Unit tests
         run: uv run pytest --tb=short -q
       - name: Audit dependencies for known vulnerabilities

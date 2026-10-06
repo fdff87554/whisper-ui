@@ -6,8 +6,10 @@ import logging
 from dataclasses import dataclass
 from typing import Any
 
-from whisper_ui.core.constants import YT_DLP_SOCKET_TIMEOUT
+from whisper_ui.core.constants import YT_DLP_SOCKET_TIMEOUT, YT_DLP_TRANSIENT_MARKERS
+from whisper_ui.core.messages import DOWNLOAD_SOURCE_TRANSIENT
 from whisper_ui.core.url_validation import YouTubeURLError, validate_youtube_url
+from whisper_ui.core.ytdlp_logging import YtDlpLogger, neutralise
 
 logger = logging.getLogger(__name__)
 
@@ -17,7 +19,12 @@ logger = logging.getLogger(__name__)
 _UNAVAILABLE_TITLES = frozenset({"[private video]", "[deleted video]"})
 
 # Lowercase substring markers that classify an extraction failure as the
-# playlist itself being inaccessible (vs. a transient network/server error).
+# playlist itself being inaccessible -- permanently, from the user's side.
+# These are only consulted after YT_DLP_TRANSIENT_MARKERS has been ruled out:
+# the phrases yt-dlp uses for a throttled or briefly-down source ("HTTP Error
+# 503: Service Unavailable", "Service temporarily unavailable") also contain
+# "unavailable", and telling someone their playlist is gone when the server
+# merely hiccuped sends them to recreate a playlist that is fine.
 _UNAVAILABLE_MARKERS = ("private", "does not exist", "unavailable", "removed")
 
 
@@ -57,6 +64,20 @@ class PlaylistInfo:
     unavailable_count: int
 
 
+def _neutralised_copy(error: Exception, detail: str) -> BaseException:
+    """The same exception and traceback, with a message safe to render.
+
+    Falls back to a plain RuntimeError when the class cannot be rebuilt from
+    a single string -- some exceptions take a different signature, and a
+    missing traceback is a far smaller loss than a crash inside logging.
+    """
+    try:
+        copy: BaseException = type(error)(detail)
+    except Exception:
+        copy = RuntimeError(detail)
+    return copy.with_traceback(error.__traceback__)
+
+
 def expand_playlist(playlist_url: str, *, limit: int) -> PlaylistInfo:
     """Resolve a canonical playlist URL into its videos' canonical watch URLs.
 
@@ -84,6 +105,9 @@ def expand_playlist(playlist_url: str, *, limit: int) -> PlaylistInfo:
         "socket_timeout": YT_DLP_SOCKET_TIMEOUT,
         "quiet": True,
         "no_warnings": True,
+        # quiet/no_warnings do not cover YoutubeDL.trouble(), which writes
+        # straight to stderr; see whisper_ui.core.ytdlp_logging.
+        "logger": YtDlpLogger(logger),
     }
 
     try:
@@ -91,14 +115,33 @@ def expand_playlist(playlist_url: str, *, limit: int) -> PlaylistInfo:
             info = ydl.extract_info(playlist_url, download=False)
     except Exception as e:
         msg = str(e).lower()
+        # yt-dlp quotes the playlist or video title in its errors, so every
+        # branch below handles remote-controlled text. It reaches the log and,
+        # for the two that interpolate it, the message the submitter sees.
+        detail = neutralise(str(e))
+        if any(m in msg for m in YT_DLP_TRANSIENT_MARKERS):
+            # Order matters: this has to win over _UNAVAILABLE_MARKERS below.
+            # No traceback -- a throttled or briefly-down source is routine.
+            logger.warning("Playlist source responded transiently: %s (url=%s)", detail, playlist_url)
+            raise PlaylistFetchError(DOWNLOAD_SOURCE_TRANSIENT) from e
         if any(m in msg for m in _UNAVAILABLE_MARKERS):
             # One line, no traceback: an inaccessible playlist is routine user
             # data, but the original message is kept visible so a blocked
             # egress that happens to match a marker can still be diagnosed.
-            logger.warning("Playlist not accessible: %s (url=%s)", e, playlist_url)
-            raise PlaylistUnavailableError(f"Playlist is not accessible: {e}") from e
-        logger.exception("Failed to fetch playlist metadata for %s", playlist_url)
-        raise PlaylistFetchError(f"Failed to fetch playlist metadata: {e}") from e
+            logger.warning("Playlist not accessible: %s (url=%s)", detail, playlist_url)
+            raise PlaylistUnavailableError(f"Playlist is not accessible: {detail}") from e
+        # Frames are worth keeping for an unexpected failure, but the last
+        # line a traceback renders is the exception's own text -- the one
+        # place the remote string survives `detail`. Logging a copy whose
+        # message is already neutralised, carrying the original traceback,
+        # keeps every frame and renders nothing forgeable.
+        logger.error(
+            "Failed to fetch playlist metadata for %s: %s",
+            playlist_url,
+            detail,
+            exc_info=_neutralised_copy(e, detail),
+        )
+        raise PlaylistFetchError(f"Failed to fetch playlist metadata: {detail}") from e
 
     if info is None:
         raise PlaylistEmptyError("Playlist metadata extraction returned nothing.")

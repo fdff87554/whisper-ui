@@ -58,6 +58,86 @@ QUALITY_GATE_REPEAT_RATIO = 0.5
 # yt-dlp
 YT_DLP_SOCKET_TIMEOUT = 30
 
+# Substrings (lowercase) that mark a *transient* yt-dlp failure: the source is
+# throttling or briefly down, not gone. The headline case is X throttling its
+# anonymous guest-token endpoint ("Bad guest token"), which yt-dlp re-fetches
+# per attempt but does not retry itself. HTTP 429 and 5xx are likewise
+# server-side. The HTTP codes are matched in their "http error NNN" form so a
+# video id that merely contains "503" cannot trip a false positive.
+#
+# Shared by the worker download path and submit-time playlist expansion so the
+# two cannot disagree about what "unavailable" means; both must test this list
+# *before* any permanent-failure markers, because "HTTP Error 503: Service
+# Unavailable" and yt-dlp's own "Service temporarily unavailable" both contain
+# the substring "unavailable".
+#
+# Markers are heuristic: they match yt-dlp's wording, and a release is free to
+# reword. YT_DLP_MARKERS_VERIFIED_AGAINST below turns that silent decay into a
+# failing test on the next version bump.
+YT_DLP_TRANSIENT_MARKERS = (
+    "guest token",
+    "http error 429",
+    "http error 500",
+    "http error 502",
+    "http error 503",
+    "http error 504",
+    "service unavailable",
+    "temporarily unavailable",
+)
+
+# The yt-dlp release the marker lists above were last checked against. Bumping
+# yt-dlp without re-reading its error strings is how a heuristic like this
+# rots unnoticed, so test_markers_are_bound_to_the_installed_yt_dlp fails until
+# someone re-checks and moves this forward in the same commit.
+YT_DLP_MARKERS_VERIFIED_AGAINST = "2026.08.19"
+
+# Ceiling on the downloaded video track's height. The pipeline only needs the
+# audio; the video track is kept so the viewer can play back the original
+# media. Without a ceiling yt-dlp takes the largest mp4 rendition on offer --
+# measured at 2160p / 229 MiB for a 3.5 minute clip whose audio track is
+# 3.3 MiB. 1080p is past what the viewer's inline player needs and cuts that
+# same clip to 77 MiB.
+YT_DLP_MAX_HEIGHT = 1080
+
+# yt-dlp's default sort ranks AV1 first and YouTube serves AV1 inside mp4, so
+# the [ext=mp4] filters below constrain the container but not the codec. The
+# viewer plays the downloaded file in a browser <video> element, where AV1
+# hardware decode coverage is far thinner than H.264's. This is a *preference*
+# (-S), not a filter: a video offered only in AV1 still downloads at its own
+# resolution rather than falling back to a worse progressive rendition. The
+# string is the sort from yt-dlp's own "-t mp4" preset.
+YT_DLP_FORMAT_SORT = (
+    "vcodec:h264",
+    "lang",
+    "quality",
+    "res",
+    "fps",
+    "hdr:12",
+    "acodec:aac",
+)
+
+# The height ceiling repeats on every fallback so a video with no capped
+# adaptive rendition cannot silently arrive at full resolution.
+#
+# The last resort writes the ceiling as "height<=?N" rather than "height<=N".
+# The question mark goes *after the operator* (yt-dlp's documented syntax) and
+# makes the filter optional: formats that report no height at all are kept
+# instead of excluded. That is what the last resort is for -- some X posts
+# carry no height -- but a plain unbounded "best" there also accepted formats
+# whose height is known and over the ceiling, which is the one thing this
+# constant exists to prevent.
+#
+# The trade-off is deliberate: a source available *only* above the ceiling now
+# fails selection instead of downloading at full size. Failing loudly beats
+# quietly doing the thing the cap forbids, and YouTube serves lower renditions
+# for every video, so this is a theoretical case there.
+YT_DLP_VIDEO_FORMAT = (
+    f"bestvideo[ext=mp4][height<={YT_DLP_MAX_HEIGHT}]+bestaudio[ext=m4a]"
+    f"/best[ext=mp4][height<={YT_DLP_MAX_HEIGHT}]"
+    f"/best[height<={YT_DLP_MAX_HEIGHT}]"
+    f"/best[height<=?{YT_DLP_MAX_HEIGHT}]"
+)
+
 # Redis expiry (seconds)
 # REDIS_PROCESSING_EXPIRY now lives in Settings.redis_processing_expiry.
 REDIS_COMPLETED_EXPIRY = 86400  # 24 hours

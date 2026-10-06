@@ -6,6 +6,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from whisper_ui.core.constants import YT_DLP_TRANSIENT_MARKERS
+from whisper_ui.core.ytdlp_logging import YtDlpLogger
 from whisper_ui.web.playlist import (
     PlaylistEmptyError,
     PlaylistFetchError,
@@ -92,6 +94,112 @@ class TestExpandPlaylistSuccess:
         assert opts["allowed_extractors"] == ["youtube:tab"]
         assert opts["playlist_items"] == "1:51"
         assert opts["socket_timeout"] > 0
+        # quiet/no_warnings leave YoutubeDL.trouble() writing to stderr, so a
+        # logger is the only thing keeping extraction failures inside the
+        # logging framework.
+        assert isinstance(opts["logger"], YtDlpLogger)
+
+
+class TestExpandPlaylistTransientFailures:
+    @pytest.mark.parametrize(
+        "message",
+        [
+            "HTTP Error 503: Service Unavailable",
+            "Service temporarily unavailable",
+            "HTTP Error 429: Too Many Requests",
+        ],
+    )
+    def test_server_side_blips_are_not_reported_as_a_missing_playlist(self, message: str):
+        # Every one of these contains a substring in _UNAVAILABLE_MARKERS, so
+        # without the transient check first the user is told their playlist is
+        # gone and goes off to recreate a playlist that is fine.
+        module = _make_mock_module(error=Exception(message))
+        with patch.dict("sys.modules", {"yt_dlp": module}), pytest.raises(PlaylistFetchError) as exc:
+            expand_playlist(PLAYLIST_URL, limit=50)
+
+        assert not isinstance(exc.value, PlaylistUnavailableError)
+
+    @pytest.mark.parametrize(
+        "message",
+        [
+            "This playlist is private",
+            "The playlist does not exist",
+            "Video unavailable",
+            "This playlist has been removed",
+        ],
+    )
+    def test_permanent_failures_still_report_the_playlist_as_inaccessible(self, message: str):
+        module = _make_mock_module(error=Exception(message))
+        with patch.dict("sys.modules", {"yt_dlp": module}), pytest.raises(PlaylistUnavailableError):
+            expand_playlist(PLAYLIST_URL, limit=50)
+
+    def test_transient_markers_are_shared_with_the_download_path(self):
+        # The two paths disagreeing about what "unavailable" means is the bug
+        # this classification order exists to close.
+        from whisper_ui.pipeline.download import YT_DLP_TRANSIENT_MARKERS as download_markers
+
+        assert download_markers is YT_DLP_TRANSIENT_MARKERS
+
+
+class TestUpstreamTextCannotForgeALine:
+    @pytest.mark.parametrize(
+        "payload",
+        ["gone\u2028INFO: ok", "gone\rINFO: ok", "gone\x1b[2KINFO: ok"],
+        ids=["line-separator", "carriage-return", "ansi-erase"],
+    )
+    def test_the_message_shown_to_the_submitter_is_single_line(self, payload: str):
+        # yt-dlp quotes the playlist or video title, so this text is
+        # remote-controlled and it reaches the submitter, not just the log.
+        module = _make_mock_module(error=Exception(f"This playlist is private: {payload}"))
+        with (
+            patch.dict("sys.modules", {"yt_dlp": module}),
+            pytest.raises(PlaylistUnavailableError) as exc,
+        ):
+            expand_playlist(PLAYLIST_URL, limit=50)
+
+        message = str(exc.value)
+        assert len(message.splitlines()) == 1
+        assert not any(ch in message for ch in "\r\x1b")
+
+    @pytest.mark.parametrize(
+        "payload",
+        ["boom\u2028INFO: ok", "boom\rINFO: ok", "boom\x1b[2KINFO: ok"],
+        ids=["line-separator", "carriage-return", "ansi-erase"],
+    )
+    def test_an_unexpected_failure_keeps_frames_without_leaking_the_text(self, caplog, payload: str):
+        # The generic branch logs a traceback, and the last line a traceback
+        # renders is the exception's own text -- the one place the remote
+        # string survives the sanitised `detail`.
+        module = _make_mock_module(error=RuntimeError(payload))
+        with (
+            patch.dict("sys.modules", {"yt_dlp": module}),
+            caplog.at_level(logging.ERROR, logger="whisper_ui.web.playlist"),
+            pytest.raises(PlaylistFetchError),
+        ):
+            expand_playlist(PLAYLIST_URL, limit=50)
+
+        record = caplog.records[0]
+        rendered = (
+            record.getMessage()
+            + "\n"
+            + (logging.Formatter().formatException(record.exc_info) if record.exc_info else "")
+        )
+        assert record.exc_info, "stack frames are worth keeping for an unexpected failure"
+        assert '  File "' in rendered
+        assert not any(ch in rendered for ch in "\r\x1b")
+        assert "\u2028" not in rendered
+
+    def test_the_log_record_is_single_line(self, caplog):
+        module = _make_mock_module(error=Exception("This playlist is private: a\u2028b"))
+        with (
+            patch.dict("sys.modules", {"yt_dlp": module}),
+            caplog.at_level(logging.WARNING, logger="whisper_ui.web.playlist"),
+            pytest.raises(PlaylistUnavailableError),
+        ):
+            expand_playlist(PLAYLIST_URL, limit=50)
+
+        assert caplog.records
+        assert len(caplog.records[0].getMessage().splitlines()) == 1
 
 
 class TestExpandPlaylistTooLarge:
