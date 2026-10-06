@@ -11,6 +11,7 @@ from rq.timeouts import BaseTimeoutException
 from whisper_ui.core.constants import (
     YT_DLP_FORMAT_SORT,
     YT_DLP_SOCKET_TIMEOUT,
+    YT_DLP_TRANSIENT_MARKERS,
     YT_DLP_VIDEO_FORMAT,
 )
 from whisper_ui.core.exceptions import DownloadError
@@ -57,25 +58,6 @@ _TWITTER_RESTRICTED_MARKERS = (
     "broadcast",
 )
 
-# Substrings (lowercase) that mark a *transient* download failure worth
-# retrying with a fresh yt-dlp client. The headline case is X throttling its
-# anonymous guest-token endpoint ("Bad guest token"): yt-dlp fetches a new
-# token on every attempt but does not retry the rejection itself, so a clean
-# retry clears the blip. HTTP 429 and 5xx are likewise server-side and
-# retryable. The HTTP codes are matched in their "http error NNN" form so a
-# tweet/video id that merely contains "503" cannot trip a false positive.
-# (Markers are heuristic, not version-specific; this behaviour was observed on
-# yt-dlp 2026.03.17 on the 129 production host.)
-_RETRYABLE_MARKERS = (
-    "guest token",
-    "http error 429",
-    "http error 500",
-    "http error 502",
-    "http error 503",
-    "http error 504",
-    "service unavailable",
-    "temporarily unavailable",
-)
 
 # A transient failure gets this many total extraction attempts; the backoff is
 # multiplied by the attempt number (2s, then 4s) so X's per-IP guest-token rate
@@ -431,7 +413,7 @@ class DownloadStage:
                 msg = str(e).lower()
                 if "twitter" in allowed_extractors and any(m in msg for m in _TWITTER_RESTRICTED_MARKERS):
                     raise DownloadError(DOWNLOAD_TWITTER_RESTRICTED) from e
-                if not any(m in msg for m in _RETRYABLE_MARKERS):
+                if not any(m in msg for m in YT_DLP_TRANSIENT_MARKERS):
                     raise DownloadError(f"Failed to download video: {neutralise(str(e))}") from e
                 if attempt >= _MAX_DOWNLOAD_ATTEMPTS:
                     raise DownloadError(DOWNLOAD_SOURCE_TRANSIENT) from e

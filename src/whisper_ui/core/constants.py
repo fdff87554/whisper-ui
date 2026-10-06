@@ -58,6 +58,39 @@ QUALITY_GATE_REPEAT_RATIO = 0.5
 # yt-dlp
 YT_DLP_SOCKET_TIMEOUT = 30
 
+# Substrings (lowercase) that mark a *transient* yt-dlp failure: the source is
+# throttling or briefly down, not gone. The headline case is X throttling its
+# anonymous guest-token endpoint ("Bad guest token"), which yt-dlp re-fetches
+# per attempt but does not retry itself. HTTP 429 and 5xx are likewise
+# server-side. The HTTP codes are matched in their "http error NNN" form so a
+# video id that merely contains "503" cannot trip a false positive.
+#
+# Shared by the worker download path and submit-time playlist expansion so the
+# two cannot disagree about what "unavailable" means; both must test this list
+# *before* any permanent-failure markers, because "HTTP Error 503: Service
+# Unavailable" and yt-dlp's own "Service temporarily unavailable" both contain
+# the substring "unavailable".
+#
+# Markers are heuristic: they match yt-dlp's wording, and a release is free to
+# reword. YT_DLP_MARKERS_VERIFIED_AGAINST below turns that silent decay into a
+# failing test on the next version bump.
+YT_DLP_TRANSIENT_MARKERS = (
+    "guest token",
+    "http error 429",
+    "http error 500",
+    "http error 502",
+    "http error 503",
+    "http error 504",
+    "service unavailable",
+    "temporarily unavailable",
+)
+
+# The yt-dlp release the marker lists above were last checked against. Bumping
+# yt-dlp without re-reading its error strings is how a heuristic like this
+# rots unnoticed, so test_markers_are_bound_to_the_installed_yt_dlp fails until
+# someone re-checks and moves this forward in the same commit.
+YT_DLP_MARKERS_VERIFIED_AGAINST = "2026.08.19"
+
 # Ceiling on the downloaded video track's height. The pipeline only needs the
 # audio; the video track is kept so the viewer can play back the original
 # media. Without a ceiling yt-dlp takes the largest mp4 rendition on offer --
