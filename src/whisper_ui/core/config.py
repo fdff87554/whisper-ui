@@ -170,6 +170,18 @@ class Settings(BaseSettings):
 
     # YouTube
     youtube_max_duration: int = 14400  # seconds (4 hours)
+    # Backstop on the bytes a single yt-dlp download may write. The duration
+    # cap above is the primary bound; this catches the cases it cannot see --
+    # media whose reported duration is missing or wrong, and formats that are
+    # far denser than the resolution ceiling suggests. Sized to clear any
+    # legitimate source at the duration cap: four hours of 1080p H.264 from
+    # YouTube runs around 3-4.5 Mbit/s, i.e. well under 8 GiB. 0 disables it.
+    # Enforced from yt-dlp's progress events plus a final check on the file
+    # on disk. It stops the transfer part-way whenever the chosen downloader
+    # reports progress; when an external downloader (ffmpeg) handles the
+    # transfer the only report comes at the end, so an oversized file lands
+    # and is then removed. See _guard_download_size.
+    youtube_max_download_size: int = 8 * 1024 * 1024 * 1024  # 8 GiB
 
     # Twitter / X
     # Reject X posts whose attached video is longer than this many seconds.

@@ -60,6 +60,7 @@ x-llm-env: &llm-env
 # there (see .env.example). Empty = anonymous.
 x-download-env: &download-env
   YOUTUBE_MAX_DURATION: ${YOUTUBE_MAX_DURATION:-14400}
+  YOUTUBE_MAX_DOWNLOAD_SIZE: ${YOUTUBE_MAX_DOWNLOAD_SIZE:-8589934592}
   TWITTER_MAX_DURATION: ${TWITTER_MAX_DURATION:-14400}
   TWITTER_COOKIES_FILE: ${TWITTER_COOKIES_FILE:-}
 # GPU worker resource lifecycle. cuda / rocm workers run rq.SimpleWorker in one
