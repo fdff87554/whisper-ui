@@ -115,6 +115,12 @@ services:
       TRUSTED_PROXY_COUNT: ${TRUSTED_PROXY_COUNT:-1}
       # Registration gate (frontend-only).
       ALLOW_REGISTRATION: ${ALLOW_REGISTRATION:-true}
+      # Optional bearer token for /metrics. Inline rather than in *core-env:
+      # only this service serves /metrics, and the anchor is shared with every
+      # worker, which has no use for the token (least privilege). Setting it
+      # makes the bundled Prometheus scrape fail until that scrape job is
+      # given the same credentials -- see README "Observability".
+      METRICS_TOKEN: ${METRICS_TOKEN:-}
     volumes:
       - app-data:/app/data
     depends_on:

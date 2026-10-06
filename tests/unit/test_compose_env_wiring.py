@@ -20,14 +20,10 @@ _COMPOSE = Path(__file__).resolve().parents[2] / "compose.yml"
 
 # Settings that are deliberately not passed through compose, with the reason.
 # Adding to this needs a reason, which is the point: the default is wired.
-_NOT_WIRED: dict[str, str] = {
-    # Pre-existing and unrelated to the download cap: METRICS_TOKEN is
-    # documented in .env.example but reaches no container, so an operator who
-    # sets it still serves /metrics unauthenticated. Tracked separately rather
-    # than fixed here, because it is a security default and deserves its own
-    # review rather than riding along in a download-size change.
-    "metrics_token": "#178",
-}
+# Settings deliberately not reachable from compose, keyed by the issue or
+# reason that excuses each. Empty is the healthy state: every setting an
+# operator is told about should be settable where they deploy.
+_NOT_WIRED: dict[str, str] = {}
 
 
 def _compose_env_names() -> set[str]:

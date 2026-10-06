@@ -198,6 +198,7 @@ Every subsequent visit goes through `/login` or self-service `/register`.
 | `MAX_LOGIN_ATTEMPTS`           | `5`     | After this many failed logins per username, the next attempt is blocked for `LOGIN_LOCKOUT_SECONDS` regardless of password correctness.                                                                                                                           |
 | `MAX_LOGIN_ATTEMPTS_PER_IP`    | `20`    | Separate, higher per-IP threshold. The default is comfortable for a small office sharing one NAT egress IP; raise it for larger NATs, or enable `TRUST_PROXY_HEADERS` so each user is rate-limited by their real address.                                         |
 | `LOGIN_LOCKOUT_SECONDS`        | `900`   | Window length for both per-user and per-IP counters.                                                                                                                                                                                                              |
+| `METRICS_TOKEN`                | (empty) | Bearer token required on `/metrics` scrapes. Empty leaves the endpoint open (counts and queue depths only, no PII). Setting it breaks the bundled Prometheus until that scrape job gets the same token — see "Observability".                                     |
 | `MAX_REGISTER_ATTEMPTS_PER_IP` | `10`    | Per-IP cap on open (non-bootstrap) registrations within `LOGIN_LOCKOUT_SECONDS`, bounding scripted account creation and username-enumeration probing. The first-run bootstrap admin is never throttled.                                                           |
 | `TRUST_PROXY_HEADERS`          | `false` | When `true`, the app uses the left-most `X-Forwarded-For` entry as the client IP (for rate-limit bucketing) and accepts `X-Forwarded-Host` as a valid CSRF host. **Only enable behind a controlled reverse proxy that resets these headers** — see warning below. |
 
@@ -551,9 +552,11 @@ ceiling is sized for small-office deployments only.
 
 ### Observability: metrics & monitoring (minimal)
 
-The frontend exposes Prometheus metrics at **`/metrics`** — unauthenticated,
-same posture as `/health`, so keep it internal. They are computed at scrape
-time from RQ/Redis and the SQLite `jobs` table, with no persistent counters:
+The frontend exposes Prometheus metrics at **`/metrics`** — open by default,
+same posture as `/health`, so keep it internal. Set `METRICS_TOKEN` to require
+`Authorization: Bearer <token>` on every scrape; see the caveat below before
+you do. They are computed at scrape time from RQ/Redis and the SQLite `jobs`
+table, with no persistent counters:
 
 | Metric                                         | Type  | Labels   | Source             |
 | ---------------------------------------------- | ----- | -------- | ------------------ |
@@ -566,6 +569,27 @@ A Redis blip degrades the scrape to the SQLite-only metrics rather than failing
 it. Per-stage latency is intentionally **not** a metric here (workers have no
 HTTP server); it ships as `elapsed_ms` in the structured JSON logs
 (`LOG_JSON=true`) and a histogram is a follow-up.
+
+**Setting `METRICS_TOKEN` breaks the bundled Prometheus until you also give
+that scrape job the token.** `monitoring/prometheus.yml` scrapes
+`frontend:8000/metrics` with no credentials, so the `whisper-frontend` target
+starts returning 401 and goes DOWN. Prometheus does not expand environment
+variables inside a scrape config, so the token has to reach it as a file:
+
+```yaml
+# monitoring/prometheus.yml
+- job_name: whisper-frontend
+  metrics_path: /metrics
+  authorization:
+    credentials_file: /etc/prometheus/metrics_token
+  static_configs:
+    - targets: ["frontend:8000"]
+```
+
+mounted into the prometheus service alongside the config. If you do not need
+in-app auth, leave `METRICS_TOKEN` empty and block `/metrics` at the reverse
+proxy instead — that keeps the bundled stack working and is the posture the
+rest of this section assumes.
 
 Bring up a self-hosted stack with the `monitoring` profile:
 
