@@ -25,6 +25,13 @@ RUN mkdir -p src/whisper_ui && touch src/whisper_ui/__init__.py && \
     uv export --frozen --no-emit-project --no-hashes --extra frontend -o /tmp/constraints.txt && \
     pip install --no-cache-dir -c /tmp/constraints.txt ".[frontend]"
 
+# No JavaScript runtime here, unlike the worker images. The only yt-dlp use in
+# this image is the playlist flat extraction in web/playlist.py, which goes
+# through the youtube:tab extractor and needs no signature or n-challenge
+# solving: measured against yt-dlp 2026.6.9 on a host with no runtime at all,
+# flat extraction returned entries normally. Add Deno here if this image ever
+# downloads media, or if flat extraction starts losing entries.
+
 # Project layer: the compiled stylesheet must land inside src/ before the
 # final install so it ships as package data. --force-reinstall replaces the
 # stub install of whisper-ui itself; --no-deps keeps the layer cheap.
