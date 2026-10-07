@@ -66,6 +66,11 @@ dev = [
   "whisper-ui[frontend,worker-llm]",
   "pytest>=9.1.1,<10",
   "pytest-cov>=7.0,<8",
+  # Parses compose.yml in tests/unit/test_compose_env_wiring.py so the wiring
+  # assertions can see which *service* an env key reaches, which a regex over
+  # the file text cannot. Already present transitively; declared here because
+  # a test must not rest on another package's dependency surviving.
+  "pyyaml>=6.0,<7",
   # In-process Redis stand-in for the end-to-end integration test. Avoids
   # spinning up a real Redis or a Docker testcontainer in CI. The ``lua``
   # extra pulls in ``lupa`` so the RedisProgressReporter's EVAL-based
