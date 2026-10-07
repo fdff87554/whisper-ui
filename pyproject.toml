@@ -150,10 +150,26 @@ ignore = ["RUF012"]
 [tool.ruff.lint.per-file-ignores]
 "__init__.py" = ["F401"]
 "tests/**" = ["T20"]
+# The copied conformance test carries `# noqa: BLE001` for a rule this
+# project does not select, so RUF100 reads those comments as unused and
+# `ruff check --fix` deletes them -- inside the hashed canonical region,
+# which then stops matching here and only here. The file is shared and
+# must stay byte-identical, so the noqa comments it needs for the
+# siblings' rule sets are not unused, they are not ours. Every other
+# rule still applies to it.
+"tests/unit/test_ytdlp_conformance.py" = ["RUF100"]
 
 [tool.ruff.format]
 quote-style = "double"
 indent-style = "space"
+# The copied conformance test is excluded from the formatter, not the linter.
+# The three projects sharing it do not share a line length -- this one uses
+# 120, Youtube-Downloader and voice-forge use 88 -- so each one's `ruff format`
+# would rewrite the shared region differently and its hash could never match
+# in all three. Measured on the template: at 120, ruff format joins the call
+# arguments in `_extractors_matching` and collapses the implicit string
+# concatenation in `_load_profile`. `ruff check` still covers the file.
+exclude = ["tests/unit/test_ytdlp_conformance.py"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
@@ -169,3 +185,85 @@ markers = [
 # browser), so the default run stays fast and pure-Python; trigger each
 # explicitly with `pytest -m integration` / `pytest -m visual`.
 addopts = "-m 'not integration and not visual'"
+
+# The yt-dlp conformance profile. Every value is a claim that
+# tests/unit/test_ytdlp_conformance.py checks against this repository's real
+# code. The spec lives in Youtube-Downloader, docs/ytdlp-invariants.md.
+[tool.ytdlp_conformance]
+spec_version = "1.0.0"
+
+# sha256 of the copied test's canonical region. Changing the region means
+# changing this line, which is the visible part of the mechanism.
+canonical_region_sha256 = "65ce3ac81219474f9ca8aa56cc8f4596f461a212147215a35186a6e00283d7fe"
+
+# The union of the pins actually in use. This repository narrows the extractor
+# per source rather than using one pin everywhere -- ["youtube"] for the
+# YouTube download, ["twitter"] for the X download, ["youtube:tab"] for the
+# playlist expansion -- which is stricter than a single shared pin, not looser.
+# The shared test compares every call site against one declared value, so it
+# reads the per-source pins as a mismatch; that gap is xfailed and tracked.
+extractor_spec = ["youtube", "youtube:tab", "twitter"]
+
+# C1's matrix, and C6 reuses it. canonicalize() here is validate_youtube_url.
+accepts_urls = [
+  "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+  "https://youtu.be/dQw4w9WgXcQ",
+]
+rejects_urls = [
+  "https://youtube.com@evil.com/watch?v=dQw4w9WgXcQ",
+  "http://169.254.169.254/latest/meta-data/",
+]
+
+# Not set in either option dict, so yt-dlp's player JS cache is left enabled.
+cachedir = true
+
+# YT_DLP_FORMAT_SORT: H.264 and AAC preferred over AV1 and VP9, as a -S
+# preference rather than a filter.
+codec_policy = "h264-preferred"
+
+# YT_DLP_SOCKET_TIMEOUT, set at every call site.
+socket_timeout_seconds = 30
+
+# Settings.youtube_max_download_size. Unlike the sibling projects this one has
+# a real ceiling: progress_hooks count bytes mid-transfer and the landed file
+# is measured before it is accepted.
+max_bytes = 8589934592
+
+# The worker images install Deno (docker/Dockerfile.worker*). The frontend
+# image deliberately has none: its only yt-dlp use is the flat playlist
+# extraction, which needs no signature or n-challenge solving. Downloads only
+# happen in the worker, so that is the image this answers for.
+js_runtime = "deno"
+js_runtime_provided_by = "image"
+
+# yt-dlp-ejs is pinned in this file's own dependencies and checked against the
+# installed yt-dlp by test_ejs_matches_the_installed_yt_dlp.
+ejs_coupling = "pinned"
+
+# YT_DLP_MARKERS_VERIFIED_AGAINST is "2026.08.19", but this key is compared
+# against importlib.metadata.version("yt-dlp"), which normalises the zero --
+# measured as "2026.8.19". The two spellings are the same release; copying the
+# constant here verbatim fails the check.
+markers_verified_against = "2026.8.19"
+
+# No PO Token provider is configured and no code reads one.
+po_token_hook = "absent"
+
+# No player_client override.
+player_clients = ["default"]
+
+# ffmpeg merges the video and audio tracks; ffprobe reads durations in
+# pipeline/audio_probe.py.
+needs_ffmpeg = true
+needs_ffprobe = true
+
+# Counted by docs/ytdlp-conformance/check-conformance-drift.sh, not by
+# anything in the test module. The entries are in tests/unit/conftest.py.
+xfail_budget = 5
+
+# Aspects this repository cannot meet, each citing an issue.
+[tool.ytdlp_conformance.waivers]
+C5 = "error-message content is not visible through the shared adapter; see fdff87554/youtube-downloader#140"
+"C7.external" = "no download is driven as a subprocess, so there is nothing for this aspect to describe; see fdff87554/youtube-downloader#135"
+"C7.landed" = "the landed file IS measured here (DownloadStage._guard_download_size), but not through the shared adapter; see fdff87554/youtube-downloader#140"
+"C8.deadline" = "no wall-clock bound on a download; see #TBD"

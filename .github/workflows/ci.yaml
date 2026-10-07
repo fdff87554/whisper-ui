@@ -39,6 +39,20 @@ jobs:
         run: mise exec -- pre-commit run --show-diff-on-failure --color=always --all-files
       - name: Unit tests
         run: uv run pytest --tb=short -q
+      # Layers 1 and 2 of the yt-dlp conformance drift control. The copied
+      # test's canonical region must still hash to what pyproject.toml
+      # records, and no more items may carry an xfail marker than
+      # xfail_budget allows. Offline, and it fails the build. The spec and
+      # the canonical copy live in fdff87554/youtube-downloader,
+      # docs/ytdlp-invariants.md.
+      #
+      # After the suite rather than before it: a failure here is about the
+      # shared contract and reads better once this repository's own tests
+      # have had their say.
+      - name: Check yt-dlp conformance drift
+        run: |
+          uv run bash docs/ytdlp-conformance/check-conformance-drift.sh \
+            tests/unit/test_ytdlp_conformance.py pyproject.toml
       - name: Audit dependencies for known vulnerabilities
         # Audit is interpreter-independent (it inspects the locked
         # requirements set, not installed bytecode), so we only run it on
