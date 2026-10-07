@@ -18,8 +18,6 @@ from whisper_ui.core.config import Settings
 
 _COMPOSE = Path(__file__).resolve().parents[2] / "compose.yml"
 
-# Settings that are deliberately not passed through compose, with the reason.
-# Adding to this needs a reason, which is the point: the default is wired.
 # Settings deliberately not reachable from compose, keyed by the issue or
 # reason that excuses each. Empty is the healthy state: every setting an
 # operator is told about should be settable where they deploy.
@@ -30,6 +28,41 @@ def _compose_env_names() -> set[str]:
     # Environment keys in compose are the SCREAMING_SNAKE mapping entries,
     # whether they sit in an x-*-env anchor or inline under a service.
     return {name.lower() for name in re.findall(r"^\s{2,}([A-Z][A-Z0-9_]*):", _COMPOSE.read_text(), re.M)}
+
+
+def _as_env_mapping(environment: object) -> dict[str, str | None]:
+    """Normalise compose's two ``environment`` shapes to one mapping.
+
+    Most services here use the mapping form, but a few (``ollama``,
+    ``redis-exporter``) use the list form ``- KEY=value``. A list entry with
+    no ``=`` means "take it from the host environment", which has no value to
+    compare, so it maps to None rather than being dropped -- the key is still
+    present, and presence is what the placement assertions ask about.
+    """
+    if isinstance(environment, dict):
+        return dict(environment)
+    if isinstance(environment, list):
+        pairs: dict[str, str | None] = {}
+        for entry in environment:
+            key, sep, value = str(entry).partition("=")
+            pairs[key] = value if sep else None
+        return pairs
+    return {}
+
+
+def _service_environments() -> dict[str, dict[str, str | None]]:
+    """Each service's environment with the x-*-env anchors already merged.
+
+    The regex above answers "is this key written down anywhere", which is the
+    right question for reachability but cannot see *which* service a key
+    reaches. yaml.safe_load resolves the ``!!merge <<: [*core-env, ...]``
+    entries, so a key that moves between services -- or into an anchor no
+    service references -- becomes visible.
+    """
+    import yaml
+
+    compose = yaml.safe_load(_COMPOSE.read_text())
+    return {name: _as_env_mapping((svc or {}).get("environment")) for name, svc in (compose["services"] or {}).items()}
 
 
 class TestEverySettingIsReachable:
@@ -46,6 +79,34 @@ class TestEverySettingIsReachable:
     def test_exemptions_still_exist(self, field: str) -> None:
         # Stops the exemption list outliving the setting it excuses.
         assert field in Settings.model_fields
+
+
+class TestMetricsTokenReachesOnlyTheFrontend:
+    """``/metrics`` is served by the frontend alone (``web/routes/metrics.py``).
+
+    Reachability is not enough for this one: the token gates a security
+    setting, so it has to arrive at *that* service and nowhere else. The
+    text-based check above would stay green if the key moved to a worker, or
+    into an anchor no service uses, or lost its value -- and in each of those
+    the endpoint quietly goes back to being open.
+    """
+
+    def test_the_frontend_receives_the_token_placeholder(self) -> None:
+        frontend = _service_environments()["frontend"]
+
+        # The full placeholder, not just the key: a hardcoded "" or a renamed
+        # variable would leave the endpoint open while the key still appears.
+        assert frontend.get("METRICS_TOKEN") == "${METRICS_TOKEN:-}"
+
+    def test_no_other_service_receives_the_token(self) -> None:
+        others = {name: env for name, env in _service_environments().items() if name != "frontend"}
+
+        leaked = sorted(name for name, env in others.items() if "METRICS_TOKEN" in env)
+
+        assert not leaked, (
+            f"only the frontend serves /metrics, so these services have no use for the token: {leaked}. "
+            "It reaches them if it is added to a shared x-*-env anchor instead of inline under frontend."
+        )
 
 
 class TestTheDownloadCapIsReachable:
