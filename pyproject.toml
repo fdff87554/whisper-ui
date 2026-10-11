@@ -56,7 +56,7 @@ worker = [
   "pyannote.audio>=4.0.0",
   "opencc-python-reimplemented>=0.1.7",
   "whisper-ui[ytdlp]",
-  "gdown>=6.1.0,<7",
+  "gdown>=6.4.1,<7",
 ]
 # Optional LLM correction stage. Only required when OLLAMA_BASE_URL is set.
 # Workers built without this extra still boot; the LLM stage is gated by the
