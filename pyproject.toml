@@ -48,7 +48,7 @@ worker = [
   # The dependencies below cover whisperx's runtime needs (minus torch/torchaudio).
   "faster-whisper>=1.1.1,<2",
   "ctranslate2>=4.8.0",
-  "transformers>=5.18.0,<6",
+  "transformers>=5.19.0,<6",
   "nltk>=3.9.1",
   "numpy>=2.5.3",
   "omegaconf>=2.3.1",
